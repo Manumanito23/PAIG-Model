@@ -196,23 +196,10 @@ with col_right:
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
-            st.download_button(
-                "⬇️ Download Model vs Data (PNG)",
-                data=png,
-                file_name=f"{program_name}_model_vs_data.png",
-                mime="image/png"
-            )
-            st.download_button(
-                "⬇️ Download 3D phase plots (PNG)",
-                data=phase_png,
-                file_name=f"{program_name}_phase3d.png",
-                mime="image/png"
-            )
-
             # Optional: save PNGs using your original helpers
             if save_pngs:
                 outdir = Path("./paig_results")
-                paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
+                paig.save_series_plot(outdir, program_name, t_years, df_sorted, sol)
                 paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
 
                 st.success(f"Saved on server: {outdir.resolve()}")
