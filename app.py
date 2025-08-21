@@ -15,6 +15,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3D projection)
 import streamlit as st
 
 import paig_fit_any_csv as paig
@@ -69,6 +70,58 @@ def render_fit_png(
     plt.close(fig)
     return buf.getvalue()
 
+def render_phase3d_png(
+    name: str,
+    df: pd.DataFrame,
+    sol,
+    dpi: int = 150
+) -> bytes:
+    """
+    Render the two 3D phase plots used in paig.save_series_3d_phase_plots
+    into a single PNG suitable for displaying in Streamlit.
+    Left:  A (x) vs P (y) vs I (z)
+    Right: A (x) vs P (y) vs G (z)
+    """
+    # Model trajectories
+    Pm, Am, Im, Gm = sol.y[0], sol.y[1], sol.y[2], sol.y[3]
+    # Data points
+    Pd = np.asarray(df["P"].values, float)
+    Ad = np.asarray(df["A"].values, float)
+    Id = np.asarray(df["I"].values, float)
+    Gd = np.asarray(df["G"].values, float)
+
+    fig = plt.figure(figsize=(12, 5))
+    ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+    ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+
+    # ----- Left: A (x), P (y), I (z)
+    ax1.plot(Am, Pm, Im, 'r-', label="Model")
+    ax1.scatter(Ad, Pd, Id, s=18, label="Data")
+    ax1.set_xlabel("Active (A)")
+    ax1.set_ylabel("Passive (P)")
+    ax1.set_zlabel("Inactive (I, cumulative)")
+    ax1.set_title("3D phase: A vs P vs I")
+    ax1.legend()
+    ax1.grid(True)
+
+    # ----- Right: A (x), P (y), G (z)
+    ax2.plot(Am, Pm, Gm, 'r-', label="Model")
+    ax2.scatter(Ad, Pd, Gd, s=18, label="Data")
+    ax2.set_xlabel("Active (A)")
+    ax2.set_ylabel("Passive (P)")
+    ax2.set_zlabel("Graduated (G, cumulative)")
+    ax2.set_title("3D phase: A vs P vs G")
+    ax2.legend()
+    ax2.grid(True)
+
+    fig.suptitle(f"{name} — PAIG 3D phase projections", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
+
 def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
     """Persist upload to a temp .csv and reuse your paig loader."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
@@ -114,7 +167,7 @@ col_left, col_right = st.columns([1, 2])
 
 with col_left:
     st.subheader("Preview")
-    st.dataframe(df_full.head(8), use_container_width=True)
+    st.dataframe(df_full, use_container_width=True) #st.dataframe(df_full.head(8), use_container_width=True)
     y_min, y_max = int(df_full["year"].min()), int(df_full["year"].max())
     yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max, value=(y_min, y_max), step=1)
 
@@ -141,6 +194,9 @@ with col_right:
             # Plot
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, n_steps=6)
             st.image(png, use_container_width=True)
+            phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
+            st.image(phase_png, use_container_width=True, caption="3D phase plots")
+
 
             # Optional: save PNGs using your original helpers
             if save_pngs:
