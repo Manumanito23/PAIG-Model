@@ -195,7 +195,7 @@ with col_right:
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, n_steps=6)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
-            st.image(phase_png, use_container_width=True, caption="3D phase plots")
+            st.image(phase_png, use_container_width=False, caption="3D phase plots")
 
 
             # Optional: save PNGs using your original helpers
