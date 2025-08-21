@@ -54,7 +54,7 @@ def render_fit_png(
 
         # uniform Y scale: 0..ymax with equal ticks
         y_max = float(max(np.nanmax(sol.y[idx]), np.nanmax(df[comp].values)))
-        ax.set_ylim(0.0, y_max)
+        ax.set_ylim(0.0, y_max*1.1)
 
         ax.set_title(title)
         ax.set_xlabel("Year")
@@ -90,7 +90,7 @@ def render_phase3d_png(
     Id = np.asarray(df["I"].values, float)
     Gd = np.asarray(df["G"].values, float)
 
-    fig = plt.figure(figsize=(12, 5))
+    fig = plt.figure(figsize=(12, 8))
     ax1 = fig.add_subplot(1, 2, 1, projection="3d")
     ax2 = fig.add_subplot(1, 2, 2, projection="3d")
 
