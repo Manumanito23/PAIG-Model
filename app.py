@@ -115,7 +115,7 @@ def render_phase3d_png(
     ax2.grid(True)
 
     fig.suptitle(f"{name} — PAIG 3D phase projections", fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.tight_layout(rect=[0, 0, 0, 0])
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
@@ -195,7 +195,7 @@ with col_right:
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, n_steps=6)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
-            st.image(phase_png, use_container_width=False, caption="3D phase plots")
+            st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
 
             # Optional: save PNGs using your original helpers
