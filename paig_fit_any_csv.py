@@ -32,7 +32,7 @@ The ODE system (PAIG):
   dI/dt = nu P
   dG/dt = gamma A
 
-Author: Manuel Guillén
+Author: Manuel Guillén and chatGPT :p
 """
 
 import argparse
@@ -311,7 +311,8 @@ def series_metrics(y_true, y_pred):
 def fit_program(df: pd.DataFrame,
                 program_name: str,
                 ratio_max: Optional[float] = None,
-                max_nfev: int = 500) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
+                max_nfev: int = 500,
+                init_guess: Optional[Dict[str, float]] = None) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
     """
     Fit the PAIG model parameters to a single program's dataset.
 
@@ -370,6 +371,13 @@ def fit_program(df: pd.DataFrame,
     delta0 = 0.6
     nu0    = 0.8
     gamma0 = 0.02
+    # Allow external initial guesses from UI sliders
+    if init_guess is not None:
+        rho0   = float(init_guess.get("rho",    rho0))
+        alpha0 = float(init_guess.get("alpha",  alpha0))
+        delta0 = float(init_guess.get("delta",  delta0))
+        nu0    = float(init_guess.get("nu",     nu0))
+        gamma0 = float(init_guess.get("gamma",  gamma0))
 
     # 5) Choose parameterization and bounds.
     #    Bounds keep the search in a physically meaningful, numerically stable region.
@@ -480,8 +488,11 @@ def save_series_plots(outdir: Path, name: str, t_years: np.ndarray, df: pd.DataF
 
     for comp, idx, title in comps:
         plt.figure()
-        plt.plot(t_years, sol.y[idx], label="Model")
+        plt.plot(t_years, sol.y[idx], 'r-', label="Model")
         plt.scatter(df["year"].values, df[comp].values, label="Data")
+
+        y_max = max(df[comp].max(), sol.y[idx].max())
+        plt.ylim(0, y_max)
         plt.title(f"{name} — {title}")
         plt.xlabel("Year")
         plt.ylabel("Students")
@@ -535,13 +546,15 @@ def save_series_grid_plot(outdir: Path, name: str, t_years: np.ndarray, df: pd.D
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
 
-        # Model: continuous line (no explicit color -> matplotlib default)
+        # Model: continuous line
         ax.plot(t_years, sol.y[idx], 'r-', label="Model")
 
         # Data: discrete yearly points; using scatter emphasizes discrete observations
         ax.scatter(df["year"].values, df[comp].values, label="Data")
 
         # Titles and axis labels
+        y_max = max(df[comp].max(), sol.y[idx].max())
+        ax.set_ylim(0, y_max)
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
@@ -670,7 +683,7 @@ def main():
 
         # Plots
         if args.save_plots:
-            save_series_grid_plot(outdir, name, t_years, df_sorted, sol)
+            save_series_plots(outdir, name, t_years, df_sorted, sol)
             save_series_3d_phase_plots(outdir, name, df_sorted, sol)
         if not args.no_show and not args.save_plots:
             # If not saving, show interactively (one figure per series)
