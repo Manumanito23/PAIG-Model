@@ -115,7 +115,7 @@ def render_phase3d_png(
     ax2.grid(True)
 
     fig.suptitle(f"{name} — PAIG 3D phase projections", fontsize=14)
-    #fig.tight_layout(rect=[0, 0, 0, 0])
+    fig.tight_layout(rect=[1, 1, 1, 1])
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
