@@ -199,7 +199,7 @@ with col_right:
             # Optional: save PNGs using your original helpers
             if save_pngs:
                 outdir = Path("./paig_results")
-                paig.save_series_plot(outdir, program_name, t_years, df_sorted, sol)
+                paig.save_series_plots(outdir, program_name, t_years, df_sorted, sol)
                 paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
 
                 st.success(f"Saved on server: {outdir.resolve()}")
