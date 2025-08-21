@@ -90,7 +90,7 @@ def render_phase3d_png(
     Id = np.asarray(df["I"].values, float)
     Gd = np.asarray(df["G"].values, float)
 
-    fig = plt.figure(figsize=(12, 8))
+    fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 2, 1, projection="3d")
     ax2 = fig.add_subplot(1, 2, 2, projection="3d")
 
