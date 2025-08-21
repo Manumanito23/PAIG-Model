@@ -90,7 +90,7 @@ def render_phase3d_png(
     Id = np.asarray(df["I"].values, float)
     Gd = np.asarray(df["G"].values, float)
 
-    fig = plt.figure(figsize=(12, 5))
+    fig = plt.figure(figsize=(12, 5), constrained_layout=True)
     ax1 = fig.add_subplot(1, 2, 1, projection="3d")
     ax2 = fig.add_subplot(1, 2, 2, projection="3d")
 
@@ -115,10 +115,9 @@ def render_phase3d_png(
     ax2.grid(True)
 
     fig.suptitle(f"{name} — PAIG 3D phase projections", fontsize=14)
-    fig.tight_layout(rect=[1, 1, 1, 1])
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    fig.savefig(buf, format="png", dpi=dpi)
     plt.close(fig)
     return buf.getvalue()
 
