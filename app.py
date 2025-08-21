@@ -48,15 +48,12 @@ def render_fit_png(
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
         # model and data
-        ax.plot(t_years, sol.y[idx], label="Model", linewidth=2)
+        ax.plot(t_years, sol.y[idx], 'r-', label="Model", linewidth=2)
         ax.scatter(df["year"].values, df[comp].values, s=18, label="Data")
 
         # uniform Y scale: 0..ymax with equal ticks
         y_max = float(max(np.nanmax(sol.y[idx]), np.nanmax(df[comp].values)))
-        if y_max <= 0:
-            y_max = 1.0
         ax.set_ylim(0.0, y_max)
-        ax.set_yticks(np.linspace(0.0, y_max, n_steps + 1))
 
         ax.set_title(title)
         ax.set_xlabel("Year")
