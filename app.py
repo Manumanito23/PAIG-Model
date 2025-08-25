@@ -185,11 +185,21 @@ with col_right:
             )
 
             # Table
-            cols = ["program","rho","alpha","delta","nu","gamma","alpha/delta",
-                    "RMSE_P","RMSE_A","RMSE_I","RMSE_G",
-                    "R2_P","R2_A","R2_I","R2_G",
-                    "R2_global_weighted","chi2_reduced_weighted","RMSE_global_weighted",
-                    "cost","nfev","success"]
+            # Opción compacta (solo métricas globales + parámetros básicos)
+            cols = [
+                "program", "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
+                "R2_global_weighted", "chi2_reduced_weighted", "RMSE_global_weighted",
+            ]
+
+            # Opción completa (incluye métricas por serie P, A, I, G)
+            # Descomenta lo de abajo y comenta la línea de arriba si quieres ver TODO:
+            # cols = [
+            #     "program","rho","alpha","delta","nu","gamma","alpha/delta",
+            #     "RMSE_P","RMSE_A","RMSE_I","RMSE_G",
+            #     "R2_P","R2_A","R2_I","R2_G",
+            #     "R2_global_weighted","chi2_reduced_weighted","RMSE_global_weighted",
+            #     "cost","nfev","success"
+            # ]
             st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
             # Plot
