@@ -185,14 +185,14 @@ with col_right:
             )
 
             # Table
-            # Opción compacta (solo métricas globales + parámetros básicos)
+            # Just some parameters, not everything
             cols = [
                 "program", "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
                 "R2_global_weighted", "chi2_reduced_weighted", "RMSE_global_weighted",
+                "R2_P","R2_A","R2_I","R2_G"
             ]
 
-            # Opción completa (incluye métricas por serie P, A, I, G)
-            # Descomenta lo de abajo y comenta la línea de arriba si quieres ver TODO:
+            # Uncomment the following to see everything:
             # cols = [
             #     "program","rho","alpha","delta","nu","gamma","alpha/delta",
             #     "RMSE_P","RMSE_A","RMSE_I","RMSE_G",
@@ -223,3 +223,4 @@ with col_right:
 
         except Exception as e:
             st.error(f"Fit failed: {e}")
+
