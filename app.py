@@ -188,7 +188,7 @@ with col_right:
             # Just some parameters, not everything
             cols = [
                 "program", "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
-                "R2_global_weighted", "chi2_reduced_weighted", "RMSE_global_weighted",
+                "R2_global_weighted", "RMSE_global_weighted",
                 "R2_P","R2_A","R2_I","R2_G"
             ]
 
@@ -223,4 +223,5 @@ with col_right:
 
         except Exception as e:
             st.error(f"Fit failed: {e}")
+
 
