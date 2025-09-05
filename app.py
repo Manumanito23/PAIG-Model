@@ -1,10 +1,11 @@
-# app.py
+# app.py (UNWEIGHTED)
 # PAIG interactive app (Streamlit)
 # - Upload CSV
 # - Select year range
 # - Choose initial guesses for (rho, alpha, delta, nu, gamma)
 # - Optional ratio constraint alpha = r * delta
-# - Fit PAIG and plot Model vs Data (2x2)
+# - Fit PAIG (pure unweighted NLS) and plot Model vs Data (2x2)
+# - Show 3D phase plots
 # - Optional: save PNGs via helpers in paig_fit_any_csv.py
 
 import io
@@ -20,7 +21,7 @@ import streamlit as st
 
 import paig_fit_any_csv as paig
 
-st.set_page_config(page_title="PAIG Model Explorer", layout="wide")
+st.set_page_config(page_title="PAIG Model Explorer (Unweighted)", layout="wide")
 
 # ----------------- helpers -----------------
 def slice_df_by_year(df: pd.DataFrame, y0: int, y1: int) -> pd.DataFrame:
@@ -35,9 +36,8 @@ def render_fit_png(
     df: pd.DataFrame,
     sol,
     dpi: int = 140,
-    n_steps: int = 6,
 ) -> bytes:
-    """Render 2x2 plot: Model (line) vs Data (scatter). Y-axis from 0 to max with equal ticks."""
+    """Render 2x2 plot: Model (line) vs Data (scatter)."""
     comps = [
         ("P", 0, "Passive students (P)"),
         ("A", 1, "Active students (A)"),
@@ -48,14 +48,10 @@ def render_fit_png(
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
-        # model and data
         ax.plot(t_years, sol.y[idx], 'r-', label="Model", linewidth=2)
         ax.scatter(df["year"].values, df[comp].values, s=18, label="Data")
-
-        # uniform Y scale: 0..ymax with equal ticks
         y_max = float(max(np.nanmax(sol.y[idx]), np.nanmax(df[comp].values)))
-        ax.set_ylim(0.0, y_max*1.1)
-
+        ax.set_ylim(0.0, y_max * 1.1)
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
@@ -77,10 +73,9 @@ def render_phase3d_png(
     dpi: int = 150
 ) -> bytes:
     """
-    Render the two 3D phase plots used in paig.save_series_3d_phase_plots
-    into a single PNG suitable for displaying in Streamlit.
-    Left:  A (x) vs P (y) vs I (z)
-    Right: A (x) vs P (y) vs G (z)
+    Render two 3D phase plots:
+      Left:  A (x) vs P (y) vs I (z)
+      Right: A (x) vs P (y) vs G (z)
     """
     # Model trajectories
     Pm, Am, Im, Gm = sol.y[0], sol.y[1], sol.y[2], sol.y[3]
@@ -122,7 +117,7 @@ def render_phase3d_png(
     return buf.getvalue()
 
 def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
-    """Persist upload to a temp .csv and reuse your paig loader."""
+    """Persist upload to a temp .csv and reuse the PAIG loader."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = Path(tmp.name)
@@ -131,7 +126,7 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
     return df, name
 
 # ----------------- sidebar -----------------
-st.sidebar.title("PAIG Controls")
+st.sidebar.title("PAIG Controls (Unweighted)")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 ratio_toggle = st.sidebar.checkbox("Enforce α = r·δ", value=False)
@@ -140,7 +135,7 @@ max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_
 save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Initial guesses used by the optimizer")
+st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
 
 rho0   = st.sidebar.slider("rho (inflow)",  min_value=1.0, max_value=500.0, value=200.0, step=1.0)
 alpha0 = st.sidebar.slider("alpha",         min_value=0.0, max_value=1.0,   value=0.4,   step=0.01)
@@ -149,7 +144,7 @@ nu0    = st.sidebar.slider("nu",            min_value=0.0, max_value=1.0,   valu
 gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   value=0.02,  step=0.001)
 
 # ----------------- main -----------------
-st.title("PAIG Model Explorer")
+st.title("PAIG Model Explorer — Unweighted Nonlinear Least Squares")
 
 if not uploaded:
     st.info("Upload a CSV to begin. Expected columns similar to your PAIG loader (Year, Passive, Active, I cumulative, G cumulative).")
@@ -166,7 +161,7 @@ col_left, col_right = st.columns([1, 2])
 
 with col_left:
     st.subheader("Preview")
-    st.dataframe(df_full, use_container_width=True) #st.dataframe(df_full.head(8), use_container_width=True)
+    st.dataframe(df_full, use_container_width=True)
     y_min, y_max = int(df_full["year"].min()), int(df_full["year"].max())
     yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max, value=(y_min, y_max), step=1)
 
@@ -184,44 +179,27 @@ with col_right:
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
             )
 
-            # Table
-            # Just some parameters, not everything
+            # Show a compact table (parameters + global unweighted metrics)
             cols = [
                 "program", "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
-                "R2_global_weighted", "RMSE_global_weighted",
-                "R2_P","R2_A","R2_I","R2_G"
+                "R2_global", "MSE_reduced", "RMSE_global",
             ]
-
-            # Uncomment the following to see everything:
-            # cols = [
-            #     "program","rho","alpha","delta","nu","gamma","alpha/delta",
-            #     "RMSE_P","RMSE_A","RMSE_I","RMSE_G",
-            #     "R2_P","R2_A","R2_I","R2_G",
-            #     "R2_global_weighted","chi2_reduced_weighted","RMSE_global_weighted",
-            #     "cost","nfev","success"
-            # ]
             st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
-            # Plot
-            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, n_steps=6)
+            # Plots: 2x2 grid + 3D phase
+            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
-            # Optional: save PNGs using your original helpers
+            # Optional: save PNGs using your file helpers
             if save_pngs:
                 outdir = Path("./paig_results")
                 paig.save_series_plots(outdir, program_name, t_years, df_sorted, sol)
                 paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
-
                 st.success(f"Saved on server: {outdir.resolve()}")
-                # Mostrar botones de descarga leyendo desde disco
                 for f in sorted(outdir.glob(f"{program_name}*.png")):
                     st.download_button(f"⬇️ Download {f.name}", f.read_bytes(), f.name, "image/png")
-                    st.caption(f"Server working dir: {Path.cwd().resolve()}")
-
 
         except Exception as e:
             st.error(f"Fit failed: {e}")
-
-
