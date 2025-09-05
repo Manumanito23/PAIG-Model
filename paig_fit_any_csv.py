@@ -325,6 +325,154 @@ def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5):
 
     return R2_global, MSE_reduced, RMSE_global
 
+def _adj_r2_from_r2(R2: float, n: int, p: int) -> float:
+    """
+    Adjusted R^2 = 1 - (1 - R^2) * ((n - 1) / (n - p - 1)).
+    Guard against invalid denominators or undefined R^2.
+    """
+    if np.isnan(R2):
+        return np.nan
+    denom = (n - p - 1)
+    if denom <= 0:
+        return np.nan
+    return 1.0 - (1.0 - R2) * ((n - 1.0) / denom)
+
+
+def series_metrics_full(y_true: np.ndarray, y_pred: np.ndarray, p: int) -> dict:
+    """
+    Standard, unweighted metrics for a single series:
+      - MAE
+      - RMSE
+      - R^2
+      - Adjusted R^2 (with p = number of fitted parameters in the model)
+      - Chi-squared (SSE)
+      - Reduced Chi-squared = SSE / (n - p)
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    resid = y_pred - y_true
+    n = len(y_true)
+
+    mae  = float(np.mean(np.abs(resid)))
+    rmse = float(np.sqrt(np.mean(resid**2)))
+
+    ss_res = float(np.sum(resid**2))                        # SSE
+    ss_tot = float(np.sum((y_true - np.mean(y_true))**2))   # TSS
+    R2     = 1.0 - ss_res/ss_tot if ss_tot > 0 else np.nan
+    adjR2  = _adj_r2_from_r2(R2, n=n, p=p)
+
+    dof = max(n - p, 1)            # degrees of freedom (guard)
+    chi2 = ss_res                   # with unit variance assumption
+    chi2_red = ss_res / dof
+
+    return dict(
+        MAE=mae,
+        RMSE=rmse,
+        R2=R2,
+        Adj_R2=adjR2,
+        Chi2=chi2,
+        Chi2_reduced=chi2_red
+    )
+
+
+def global_metrics_4d(df: pd.DataFrame, sol, p: int) -> dict:
+    """
+    GLOBAL (overall) metrics using 4D Euclidean residuals per year.
+
+    Definitions:
+      e_t = || y_model(:,t) - y_data(:,t) ||_2  (Euclidean distance in R^4)
+      SSE = sum_t e_t^2 = sum_{k,t} (resid_{k,t})^2
+      TSS = sum_{k,t} (y_{k,t} - mean_k)^2
+
+      MAE_global  = mean_t e_t
+      RMSE_global = sqrt( mean_t e_t^2 ) = sqrt(SSE / (4T))
+      R2_global   = 1 - SSE/TSS
+      Adj_R2_global with n = 4T observations, p parameters
+      Chi2_global = SSE (unit variance), Chi2_reduced = SSE / (n - p)
+    """
+    # Data and prediction matrices (4 x T)
+    data_mat = df[["P", "A", "I", "G"]].T.values.astype(float)
+    pred_mat = sol.y.astype(float)
+    res_mat  = pred_mat - data_mat
+
+    # Euclidean distance per time (length T)
+    e = np.sqrt(np.sum(res_mat**2, axis=0))
+    T = e.size
+    n = 4 * T     # total scalar observations across series
+
+    # SSE and TSS (global)
+    SSE = float(np.sum(e**2))  # == np.sum(res_mat**2)
+    mean_vec = np.mean(data_mat, axis=1, keepdims=True)  # per-series mean
+    TSS = float(np.sum((data_mat - mean_vec)**2))
+
+    MAE_glob  = float(np.mean(e))
+    RMSE_glob = float(np.sqrt(np.mean(e**2)))
+    R2_glob   = 1.0 - SSE/TSS if TSS > 0 else np.nan
+    Adj_R2_glob = _adj_r2_from_r2(R2_glob, n=n, p=p)
+
+    dof = max(n - p, 1)
+    Chi2_glob = SSE
+    Chi2_red_glob = SSE / dof
+
+    return dict(
+        MAE=MAE_glob,
+        RMSE=RMSE_glob,
+        R2=R2_glob,
+        Adj_R2=Adj_R2_glob,
+        Chi2=Chi2_glob,
+        Chi2_reduced=Chi2_red_glob
+    )
+
+
+def build_metrics_table(df: pd.DataFrame, sol, p: int = 5) -> pd.DataFrame:
+    """
+    Create the table you showed:
+    Rows: Global (overall), P, A, I, G
+    Cols: MAE, RMSE, R^2, Adjusted R^2, Chi-squared, Reduced Chi-squared
+    All formulas are standard, unweighted.
+    """
+    # Global row (4D Euclidean)
+    global_row = global_metrics_4d(df, sol, p=p)
+
+    # Per-series rows
+    names = ["P", "A", "I", "G"]
+    rows = []
+    rows.append(("Global (overall)", global_row))
+
+    for i, nm in enumerate(names):
+        stats = series_metrics_full(df[nm].values, sol.y[i], p=p)
+        rows.append((f"{nm}", stats))
+
+    # Build DataFrame in the requested order
+    columns = [
+        "Mean Absolute Error (MAE)",
+        "Root Mean Square Error (RMSE)",
+        "Coefficient of Determination (R^2)",
+        "Adjusted R^2",
+        "Chi-squared",
+        "Reduced Chi-squared",
+    ]
+
+    data = []
+    index = []
+    for label, d in rows:
+        index.append(label)
+        data.append([d["MAE"], d["RMSE"], d["R2"], d["Adj_R2"], d["Chi2"], d["Chi2_reduced"]])
+
+    table = pd.DataFrame(data, index=index, columns=columns)
+    return table
+
+
+def save_metrics_table(outdir: Path, name: str, df: pd.DataFrame, sol, p: int = 5) -> Path:
+    """
+    Build the table and save it as CSV next to the plots.
+    Returns the saved path.
+    """
+    table = build_metrics_table(df, sol, p=p)
+    csv_path = outdir / f"{name}_metrics_table.csv"
+    table.to_csv(csv_path, float_format="%.6g")
+    return csv_path
 
 # ------------------------------
 # Fitting routine for one program
@@ -400,11 +548,11 @@ def fit_program(df: pd.DataFrame,
         ub = np.array([1e6,  5.0,  5.0,  1.0,  ratio_max])
         fun = lambda x: residuals_ratio(x, t, y0, data_mat, ratio_max=ratio_max)
 
-    # 6) Pure nonlinear least-squares (UNWEIGHTED), canonical quadratic loss.
+    # 6) Nonlinear least-squares
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='soft_l1',         #Robust
+                        loss='soft_l1',         # <-- soft L1 loss (robust weighting)
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # 7) Extract fitted parameters (map back alpha if ratio parameterization used).
@@ -617,6 +765,8 @@ def main():
         if args.save_plots:
             save_series_plots(outdir, name, t_years, df_sorted, sol)
             save_series_3d_phase_plots(outdir, name, df_sorted, sol)
+        metrics_csv = save_metrics_table(outdir, name, df_sorted, sol, p=5)
+        print(f"  Saved metrics table: {metrics_csv}")
         if not args.no_show and not args.save_plots:
             # Show interactive (one figure per series)
             comps  = ["P", "A", "I", "G"]
