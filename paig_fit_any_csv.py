@@ -404,7 +404,7 @@ def fit_program(df: pd.DataFrame,
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='linear',         # <-- pure LS (no robust weighting)
+                        loss='soft_l1',         #Robust
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # 7) Extract fitted parameters (map back alpha if ratio parameterization used).
