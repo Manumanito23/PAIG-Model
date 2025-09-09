@@ -2,11 +2,11 @@
 # PAIG interactive app (Streamlit)
 # - Upload CSV
 # - Select year range
-# - Choose initial guesses for (rho, alpha, delta, nu, gamma)
-# - Optional: estimate initial conditions y0 from data (fit_y0)
-# - Fit PAIG (pure unweighted NLS) and plot Model vs Data (2x2)
-# - Show 3D phase plots
-# - Optional: save PNGs via helpers in paig_fit_any_csv.py
+# - Choose initial guesses (rho, alpha, delta, nu, gamma)
+# - Choose initial-condition mode: "estimated" (fit y0) or "zeros"
+# - Fit PAIG (pure unweighted NLS) and plot 2x2 + 3D
+# - Optional: shift year labels by -1 for display only
+# - Optional: save PNGs
 
 import io
 import tempfile
@@ -16,12 +16,13 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3D projection)
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import streamlit as st
 
 import paig_fit_any_csv as paig
 
 st.set_page_config(page_title="PAIG Model Explorer", layout="wide")
+
 
 # ----------------- helpers -----------------
 def slice_df_by_year(df: pd.DataFrame, y0: int, y1: int) -> pd.DataFrame:
@@ -29,6 +30,7 @@ def slice_df_by_year(df: pd.DataFrame, y0: int, y1: int) -> pd.DataFrame:
     if len(s) < 3:
         raise ValueError(f"Selected range {y0}-{y1} has too few rows ({len(s)}). Please pick ≥ 3.")
     return s
+
 
 def render_fit_png(
     name: str,
@@ -38,7 +40,6 @@ def render_fit_png(
     dpi: int = 140,
     shift_year_labels: bool = False,
 ) -> bytes:
-    """Render 2x2 plot: Model (line) vs Data (scatter)."""
     comps = [
         ("P", 0, "Passive students (P)"),
         ("A", 1, "Active students (A)"),
@@ -59,15 +60,12 @@ def render_fit_png(
         ax.grid(True)
         ax.legend()
 
-        # ----- display-only relabel of x-ticks (positions unchanged)
         if shift_year_labels:
             ticks = ax.get_xticks()
-            # Keep positions; show labels as (tick - 1) years
             labels = [str(int(round(x)) - 1) for x in ticks]
             ax.set_xticks(ticks)
             ax.set_xticklabels(labels)
 
-    # Show the displayed range in the title (also shifted if requested)
     disp_start = int(t_years[0]) - 1 if shift_year_labels else int(t_years[0])
     disp_end   = int(t_years[-1]) - 1 if shift_year_labels else int(t_years[-1])
     fig.suptitle(f"{name} — PAIG: Model vs Data (range: {disp_start}-{disp_end})", fontsize=14)
@@ -78,20 +76,9 @@ def render_fit_png(
     plt.close(fig)
     return buf.getvalue()
 
-def render_phase3d_png(
-    name: str,
-    df: pd.DataFrame,
-    sol,
-    dpi: int = 150
-) -> bytes:
-    """
-    Render two 3D phase plots:
-      Left:  A (x) vs P (y) vs I (z)
-      Right: A (x) vs P (y) vs G (z)
-    """
-    # Model trajectories
+
+def render_phase3d_png(name: str, df: pd.DataFrame, sol, dpi: int = 150) -> bytes:
     Pm, Am, Im, Gm = sol.y[0], sol.y[1], sol.y[2], sol.y[3]
-    # Data points
     Pd = np.asarray(df["P"].values, float)
     Ad = np.asarray(df["A"].values, float)
     Id = np.asarray(df["I"].values, float)
@@ -101,35 +88,24 @@ def render_phase3d_png(
     ax1 = fig.add_subplot(1, 2, 1, projection="3d")
     ax2 = fig.add_subplot(1, 2, 2, projection="3d")
 
-    # ----- Left: A (x), P (y), I (z)
     ax1.plot(Am, Pm, Im, 'r-', label="Model")
     ax1.scatter(Ad, Pd, Id, s=18, label="Data")
-    ax1.set_xlabel("Active (A)")
-    ax1.set_ylabel("Passive (P)")
-    ax1.set_zlabel("Inactive (I, cumulative)")
-    ax1.set_title("3D phase: A vs P vs I")
-    ax1.legend()
-    ax1.grid(True)
+    ax1.set_xlabel("Active (A)"); ax1.set_ylabel("Passive (P)"); ax1.set_zlabel("Inactive (I)")
+    ax1.set_title("3D phase: A vs P vs I"); ax1.legend(); ax1.grid(True)
 
-    # ----- Right: A (x), P (y), G (z)
     ax2.plot(Am, Pm, Gm, 'r-', label="Model")
     ax2.scatter(Ad, Pd, Gd, s=18, label="Data")
-    ax2.set_xlabel("Active (A)")
-    ax2.set_ylabel("Passive (P)")
-    ax2.set_zlabel("Graduated (G, cumulative)")
-    ax2.set_title("3D phase: A vs P vs G")
-    ax2.legend()
-    ax2.grid(True)
+    ax2.set_xlabel("Active (A)"); ax2.set_ylabel("Passive (P)"); ax2.set_zlabel("Graduated (G)")
+    ax2.set_title("3D phase: A vs P vs G"); ax2.legend(); ax2.grid(True)
 
     fig.suptitle(f"{name} — PAIG 3D phase projections", fontsize=14)
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi)
     plt.close(fig)
     return buf.getvalue()
 
+
 def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
-    """Persist upload to a temp .csv and reuse the PAIG loader."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = Path(tmp.name)
@@ -137,38 +113,30 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
     name = uploaded_file.name.rsplit(".", 1)[0].replace(" ", "_")
     return df, name
 
+
 # ----------------- sidebar -----------------
 st.sidebar.title("PAIG Controls (Unweighted)")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-# ===== Temporarily disabled controls (left here for future reuse) =====
-# ratio_toggle   = st.sidebar.checkbox("Enforce α = r·δ", value=False)
-# ratio_max_val  = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0,
-#                                          step=0.01, format="%.2f", help="Upper bound for r in α=r·δ")
-# max_nfev       = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
-# =====================================================================
-
-estimate_y0    = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
+save_pngs = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 shift_year_labels = st.sidebar.checkbox("Shift year labels by -1 (display only)", value=False)
-save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
-
 rho0   = st.sidebar.slider("rho (inflow)",  min_value=1.0, max_value=500.0, value=200.0, step=1.0)
 alpha0 = st.sidebar.slider("alpha",         min_value=0.0, max_value=1.0,   value=0.4,   step=0.01)
 delta0 = st.sidebar.slider("delta",         min_value=0.0, max_value=1.0,   value=0.6,   step=0.01)
 nu0    = st.sidebar.slider("nu",            min_value=0.0, max_value=1.0,   value=0.8,   step=0.01)
 gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   value=0.02,  step=0.001)
 
+
 # ----------------- main -----------------
 st.title("PAIG Model Explorer — Unweighted Nonlinear Least Squares")
 
 if not uploaded:
-    st.info("Upload a CSV to begin. Expected columns like (Year, Passive, Active, I cumulative, G cumulative).")
+    st.info("Upload a CSV to begin. Expected columns similar to your PAIG loader (Year, Passive, Active, I cumulative, G cumulative).")
     st.stop()
 
-# Load and preview
 try:
     df_full, program_name = load_program_csv_from_upload(uploaded)
 except Exception as e:
@@ -185,56 +153,53 @@ with col_left:
 
 with col_right:
     st.subheader("Fit")
+
+    # Smart default for y0 mode:
+    # - if the selected range starts at the very first year -> default "zeros"
+    # - else -> default "estimated"
+    default_mode = "zeros" if yr0 == y_min else "estimated"
+    idx = 0 if default_mode == "estimated" else 1
+    y0_mode = st.radio(
+        "Initial condition at start of fit",
+        options=["estimated (fit y₀)", "zeros (P=A=I=G=0)"],
+        index=idx,
+        horizontal=True
+    )
+    y0_mode = "estimated" if "estimated" in y0_mode else "zeros"
+
     if st.button("Run Fit with current initial guesses", type="primary"):
         try:
             df_slice = slice_df_by_year(df_full, yr0, yr1)
 
-            # Call fitter with defaults for ratio_max and max_nfev.
-            # (If you later re-enable the controls above, pass them here.)
             summary, t_years, df_sorted, sol = paig.fit_program(
                 df_slice,
                 program_name,
-                # ratio_max=(float(ratio_max_val) if ratio_toggle else None),  # disabled
-                fit_y0=bool(estimate_y0),
-                # max_nfev=int(max_nfev),                                     # disabled
+                y0_mode=y0_mode,
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
             )
 
-            # Show a compact table (parameters + global unweighted metrics if present)
-            preferred_cols = [
-                "program", "fit_y0",
+            # Compact summary
+            cols = [
+                "program", "y0_mode", "y0_P", "y0_A", "y0_I", "y0_G",
                 "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
-                "P0", "A0", "I0", "G0",
-                "R2_global", "AdjR2_global", "RMSE_global", "MSE_reduced", "Chi2_reduced"
+                "R2_global", "MSE_reduced", "RMSE_global",
             ]
-            cols = [c for c in preferred_cols if c in summary]
             st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
-            # Plots: 2x2 grid + 3D phase
+            # Plots
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150,
-                                shift_year_labels=shift_year_labels)
+                                 shift_year_labels=shift_year_labels)
             st.image(png, use_container_width=True)
-            if shift_year_labels:
-                st.caption("Year axis labels are shown one year earlier (display only).")
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
-            # Optional: save PNGs using your file helpers
+            # Optional save
             if save_pngs:
                 outdir = Path("./paig_results")
                 outdir.mkdir(parents=True, exist_ok=True)
-
-                if shift_year_labels:
-                    # save the already-rendered, label-shifted PNG
-                    out_path = outdir / f"{program_name}_PAIG_grid_shifted.png"
-                    out_path.write_bytes(png)
-                else:
-                    # default helper (no label shift)
-                    paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
-
-                # 3D phase plots don't have Year axes, so no shift needed
+                # Save the rendered grid (respects label shift)
+                (outdir / f"{program_name}_PAIG_grid.png").write_bytes(png)
                 paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
-
                 st.success(f"Saved on server: {outdir.resolve()}")
                 for f in sorted(outdir.glob(f"{program_name}*.png")):
                     st.download_button(f"⬇️ Download {f.name}", f.read_bytes(), f.name, "image/png")
