@@ -1,7 +1,4 @@
-# app.py (UNWEIGHTED) — classic layout restored + auto y0 + metrics table
-# - Left column: Preview table + Year range slider (narrow width)
-# - Right column: y0 mode (auto or manual), parameters summary, metrics table, plots
-# - Pure unweighted nonlinear least squares (delegated to paig_fit_any_csv.py)
+# app.py (UNWEIGHTED) — restored layout + explicit Fit button + auto y0 + metrics table
 
 import io
 import tempfile
@@ -46,7 +43,7 @@ def render_fit_png(
         ax.plot(t_years, sol.y[idx], 'r-', label="Model", linewidth=2)
         ax.scatter(df["year"].values, df[comp].values, s=18, label="Data")
         y_max = float(max(np.nanmax(sol.y[idx]), np.nanmax(df[comp].values)))
-        ax.set_ylim(0.0, y_max * 1.1)
+        ax.set_ylim(0.0, max(1.0, y_max * 1.1))
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
@@ -106,7 +103,6 @@ uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 label_shift_on = st.sidebar.checkbox("Shift year labels by -1 (display only)", value=False)
-auto_run       = st.sidebar.checkbox("Re-fit automatically on change", value=True)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
@@ -132,59 +128,61 @@ except Exception as e:
 
 y_min, y_max = int(df_full["year"].min()), int(df_full["year"].max())
 
-# Use two columns so the Preview table is not full width
+# Two columns so the Preview table is not full width
 col_left, col_right = st.columns([1, 2], gap="large")
 
 with col_left:
     st.subheader("Preview")
     st.dataframe(df_full, height=340, use_container_width=False)  # narrow table
-
-    # Year range slider stays in the left column under the table
     yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max,
                          value=(y_min, y_max), step=1, label_visibility="visible")
 
 with col_right:
-    # y0 mode (auto or manual). We keep a small state variable so radio updates when year range changes
-    if "y0_mode" not in st.session_state:
-        st.session_state.y0_mode = "estimated"
-
+    # --- y0 selection with safe logic ---
     st.markdown("#### Initial condition at start of fit")
-    auto_y0 = st.checkbox("Auto-select (zeros if range starts at earliest year, else estimated)",
-                          value=True, help="Checked: selection follows the year range.")
 
-    # compute the auto choice
+    # Auto decision: zeros if range starts at the earliest year, else estimated
     auto_choice = "zeros" if yr0 == y_min else "estimated"
-    if auto_y0:
+    auto_y0 = st.checkbox(
+        "Auto-select (zeros if range starts at earliest year, else estimated)",
+        value=True
+    )
+
+    labels = ["estimated (fit y₀)", "zeros (P=A=I=G=0)"]
+    label_to_mode = {labels[0]: "estimated", labels[1]: "zeros"}
+    mode_to_index = {"estimated": 0, "zeros": 1}
+
+    if "y0_mode" not in st.session_state:
         st.session_state.y0_mode = auto_choice
 
-    # radio reflects current state; user can override only when auto_y0 is off
-    disabled = auto_y0
-    st.radio(
-        " ",
-        options=[("estimated (fit y₀)", "estimated"), ("zeros (P=A=I=G=0)", "zeros")],
-        format_func=lambda x: x[0],
-        horizontal=True,
-        key="y0_mode",
-        label_visibility="collapsed",
-        disabled=disabled,
-    )
-    y0_mode = st.session_state.y0_mode  # "estimated" or "zeros"
+    if auto_y0:
+        # show radio, but keep it disabled and set index via the auto choice
+        idx = mode_to_index[auto_choice]
+        st.radio(" ", labels, index=idx, horizontal=True, disabled=True, label_visibility="collapsed")
+        y0_mode = auto_choice
+        st.session_state.y0_mode = auto_choice
+    else:
+        # user controls the radio; default to last selection stored
+        current_idx = mode_to_index.get(st.session_state.y0_mode, mode_to_index["estimated"])
+        sel_label = st.radio(" ", labels, index=current_idx, horizontal=True, label_visibility="collapsed")
+        y0_mode = label_to_mode[sel_label]
+        st.session_state.y0_mode = y0_mode
 
-    # run condition: auto or button
-    should_run = auto_run or st.button("Run Fit with current initial guesses", type="primary")
+    # --- explicit Fit button ---
+    run = st.button("Run Fit with current initial guesses", type="primary")
 
-    if should_run:
+    if run:
         try:
             df_slice = slice_df_by_year(df_full, yr0, yr1)
 
+            # Fit (pure unweighted); y0_mode controls estimated vs zeros
             summary, t_years, df_sorted, sol = paig.fit_program(
                 df_slice,
                 program_name,
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
-                y0_mode=y0_mode,  # estimated vs zeros
+                y0_mode=y0_mode,
             )
 
-            # Parameter summary
             st.dataframe(
                 pd.DataFrame([summary])[["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]],
                 use_container_width=True
@@ -212,14 +210,13 @@ with col_right:
                 mime="text/csv",
             )
 
-            # Plots (2x2 + 3D)
+            # Plots
             shift = -1 if label_shift_on else 0
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, label_shift_years=shift)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
-            # Optional: save PNGs
             if save_pngs:
                 outdir = Path("./paig_results")
                 outdir.mkdir(parents=True, exist_ok=True)
