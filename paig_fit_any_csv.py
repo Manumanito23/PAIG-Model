@@ -348,7 +348,7 @@ def fit_program(df: pd.DataFrame,
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='soft_l1',   # robust but still standard NLS
+                        loss='linear',   #soft_l1 robust but still standard NLS, linear is the classic
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # 6) Parse fitted parameters

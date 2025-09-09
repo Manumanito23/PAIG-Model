@@ -21,7 +21,7 @@ import streamlit as st
 
 import paig_fit_any_csv as paig
 
-st.set_page_config(page_title="PAIG Model Explorer (Unweighted)", layout="wide")
+st.set_page_config(page_title="PAIG Model Explorer", layout="wide")
 
 # ----------------- helpers -----------------
 def slice_df_by_year(df: pd.DataFrame, y0: int, y1: int) -> pd.DataFrame:
