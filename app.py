@@ -36,6 +36,7 @@ def render_fit_png(
     df: pd.DataFrame,
     sol,
     dpi: int = 140,
+    shift_year_labels: bool = False,
 ) -> bytes:
     """Render 2x2 plot: Model (line) vs Data (scatter)."""
     comps = [
@@ -58,7 +59,18 @@ def render_fit_png(
         ax.grid(True)
         ax.legend()
 
-    fig.suptitle(f"{name} — PAIG: Model vs Data (range: {int(t_years[0])}-{int(t_years[-1])})", fontsize=14)
+        # ----- display-only relabel of x-ticks (positions unchanged)
+        if shift_year_labels:
+            ticks = ax.get_xticks()
+            # Keep positions; show labels as (tick - 1) years
+            labels = [str(int(round(x)) - 1) for x in ticks]
+            ax.set_xticks(ticks)
+            ax.set_xticklabels(labels)
+
+    # Show the displayed range in the title (also shifted if requested)
+    disp_start = int(t_years[0]) - 1 if shift_year_labels else int(t_years[0])
+    disp_end   = int(t_years[-1]) - 1 if shift_year_labels else int(t_years[-1])
+    fig.suptitle(f"{name} — PAIG: Model vs Data (range: {disp_start}-{disp_end})", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     buf = io.BytesIO()
@@ -137,6 +149,7 @@ uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 # =====================================================================
 
 estimate_y0    = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
+shift_year_labels = st.sidebar.checkbox("Shift year labels by -1 (display only)", value=False)
 save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
@@ -198,8 +211,11 @@ with col_right:
             st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
             # Plots: 2x2 grid + 3D phase
-            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150)
+            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150,
+                                shift_year_labels=shift_year_labels)
             st.image(png, use_container_width=True)
+            if shift_year_labels:
+                st.caption("Year axis labels are shown one year earlier (display only).")
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
@@ -207,8 +223,18 @@ with col_right:
             if save_pngs:
                 outdir = Path("./paig_results")
                 outdir.mkdir(parents=True, exist_ok=True)
-                paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
+
+                if shift_year_labels:
+                    # save the already-rendered, label-shifted PNG
+                    out_path = outdir / f"{program_name}_PAIG_grid_shifted.png"
+                    out_path.write_bytes(png)
+                else:
+                    # default helper (no label shift)
+                    paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
+
+                # 3D phase plots don't have Year axes, so no shift needed
                 paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
+
                 st.success(f"Saved on server: {outdir.resolve()}")
                 for f in sorted(outdir.glob(f"{program_name}*.png")):
                     st.download_button(f"⬇️ Download {f.name}", f.read_bytes(), f.name, "image/png")
