@@ -3,9 +3,8 @@
 # - Upload CSV
 # - Select year range
 # - Choose initial guesses for (rho, alpha, delta, nu, gamma)
-# - Optional ratio constraint alpha = r * delta
 # - Optional: estimate initial conditions y0 from data (fit_y0)
-# - Fit PAIG and plot Model vs Data (2x2)
+# - Fit PAIG (pure unweighted NLS) and plot Model vs Data (2x2)
 # - Show 3D phase plots
 # - Optional: save PNGs via helpers in paig_fit_any_csv.py
 
@@ -130,13 +129,15 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
 st.sidebar.title("PAIG Controls (Unweighted)")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-ratio_toggle   = st.sidebar.checkbox("Enforce α = r·δ", value=False)
-ratio_max_val  = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0,
-                                         step=0.01, format="%.2f", help="Upper bound for r in α=r·δ")
-estimate_y0    = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
+# ===== Temporarily disabled controls (left here for future reuse) =====
+# ratio_toggle   = st.sidebar.checkbox("Enforce α = r·δ", value=False)
+# ratio_max_val  = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0,
+#                                          step=0.01, format="%.2f", help="Upper bound for r in α=r·δ")
+# max_nfev       = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
+# =====================================================================
 
-max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
-save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
+estimate_y0    = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
+save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
@@ -175,22 +176,25 @@ with col_right:
         try:
             df_slice = slice_df_by_year(df_full, yr0, yr1)
 
+            # Call fitter with defaults for ratio_max and max_nfev.
+            # (If you later re-enable the controls above, pass them here.)
             summary, t_years, df_sorted, sol = paig.fit_program(
                 df_slice,
                 program_name,
-                ratio_max=(float(ratio_max_val) if ratio_toggle else None),
+                # ratio_max=(float(ratio_max_val) if ratio_toggle else None),  # disabled
                 fit_y0=bool(estimate_y0),
-                max_nfev=int(max_nfev),
+                # max_nfev=int(max_nfev),                                     # disabled
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
             )
 
-            # Show a compact table (parameters + global unweighted metrics)
-            cols = [
-                "program", "fit_y0", "rho", "alpha", "delta", "nu", "gamma",
-                "alpha/delta", "P0", "A0", "I0", "G0",
-                "R2_global", "AdjR2_global", "RMSE_global", "Chi2_reduced"
+            # Show a compact table (parameters + global unweighted metrics if present)
+            preferred_cols = [
+                "program", "fit_y0",
+                "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
+                "P0", "A0", "I0", "G0",
+                "R2_global", "AdjR2_global", "RMSE_global", "MSE_reduced", "Chi2_reduced"
             ]
-            cols = [c for c in cols if c in summary]  # guard if some not present
+            cols = [c for c in preferred_cols if c in summary]
             st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
             # Plots: 2x2 grid + 3D phase
