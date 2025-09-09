@@ -1,5 +1,5 @@
-# app.py (UNWEIGHTED)
-# PAIG interactive app (Streamlit)
+# app.py (UNWEIGHTED) — keeps previous layout + metrics table + auto re-fit toggle
+# Streamlit UI for PAIG: unweighted NLS, y0 mode (estimated | zeros), year-label shift
 
 import io
 import tempfile
@@ -9,6 +9,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import streamlit as st
 
@@ -28,13 +29,10 @@ def render_fit_png(
     t_years: np.ndarray,
     df: pd.DataFrame,
     sol,
-    dpi: int = 140,
+    dpi: int = 150,
     label_shift_years: int = 0,
 ) -> bytes:
     """Render 2x2 plot: Model (line) vs Data (scatter)."""
-    # Optionally shift only the tick labels by -1 year (display-only)
-    x_labels = (t_years + label_shift_years).astype(int)
-
     comps = [
         ("P", 0, "Passive students (P)"),
         ("A", 1, "Active students (A)"),
@@ -52,13 +50,13 @@ def render_fit_png(
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
-        # relabel x-ticks if requested (display-only)
-        xt = ax.get_xticks()
-        ax.set_xticklabels([f"{int(x)+label_shift_years:d}" for x in xt])
+        # display-only shift of x tick labels
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)+label_shift_years:d}"))
         ax.grid(True)
         ax.legend()
 
-    fig.suptitle(f"{name} — PAIG: Model vs Data (range: {int(x_labels[0])}-{int(x_labels[-1])})", fontsize=14)
+    shown_years = (int(t_years[0] + label_shift_years), int(t_years[-1] + label_shift_years))
+    fig.suptitle(f"{name} — PAIG: Model vs Data (range: {shown_years[0]}-{shown_years[1]})", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     buf = io.BytesIO()
@@ -66,12 +64,7 @@ def render_fit_png(
     plt.close(fig)
     return buf.getvalue()
 
-def render_phase3d_png(
-    name: str,
-    df: pd.DataFrame,
-    sol,
-    dpi: int = 150
-) -> bytes:
+def render_phase3d_png(name: str, df: pd.DataFrame, sol, dpi: int = 150) -> bytes:
     """Render two 3D phase plots."""
     Pm, Am, Im, Gm = sol.y[0], sol.y[1], sol.y[2], sol.y[3]
     Pd = np.asarray(df["P"].values, float)
@@ -115,10 +108,10 @@ uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 label_shift_on = st.sidebar.checkbox("Shift year labels by -1 (display only)", value=False)
+auto_run       = st.sidebar.checkbox("Re-fit automatically on change", value=True)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
-
 rho0   = st.sidebar.slider("rho (inflow)",  min_value=1.0, max_value=500.0, value=200.0, step=1.0)
 alpha0 = st.sidebar.slider("alpha",         min_value=0.0, max_value=1.0,   value=0.4,   step=0.01)
 delta0 = st.sidebar.slider("delta",         min_value=0.0, max_value=1.0,   value=0.6,   step=0.01)
@@ -153,43 +146,53 @@ y0_mode = st.radio(
     horizontal=True,
     label_visibility="collapsed",
 )
-y0_mode = y0_mode[1]  # extract "estimated" or "zeros"
+y0_mode = y0_mode[1]  # "estimated" or "zeros"
 
 # Preview table
 st.subheader("Preview")
 st.dataframe(df_full, use_container_width=True, height=320)
 
+# --- Fit section ---
 st.subheader("Fit")
-if st.button("Run Fit with current initial guesses", type="primary"):
+
+# run criterion: auto or button
+should_run = auto_run or st.button("Run Fit with current initial guesses", type="primary")
+
+if should_run:
     try:
         df_slice = slice_df_by_year(df_full, yr0, yr1)
 
-        # Run fit (unweighted; no ratio constraints; default max_nfev)
         summary, t_years, df_sorted, sol = paig.fit_program(
             df_slice,
             program_name,
             init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
-            y0_mode=y0_mode,        # new: estimated vs zeros
+            y0_mode=y0_mode,  # estimated vs zeros
         )
 
-        # Compact parameter summary (plus a couple diagnostics if you want)
-        cols = ["program","rho","alpha","delta","nu","gamma","alpha/delta"]
+        # Compact parameter summary
+        cols = ["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]
         st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
 
-        # ---- metrics table (back again) ----
-        metrics_df = paig.metrics_table(df_sorted, sol, p=5)
+        # Metrics table (unweighted; global uses 4D Euclidean residuals)
+        metrics_df = paig.metrics_table(df_sorted, sol, p=(9 if y0_mode=="estimated" else 5))
         st.markdown("#### Statistical metrics")
-        st.dataframe(metrics_df.style.format({
-            "Mean Absolute Error (MAE)": "{:.3f}",
-            "Root Mean Square Error (RMSE)": "{:.3f}",
-            "Coefficient of Determination (R^2)": "{:.3f}",
-            "Adjusted R^2": "{:.3f}",
-            "Chi-squared": "{:.3f}",
-            "Reduced Chi-squared": "{:.3f}",
-        }), use_container_width=True)
-        csv_bytes = metrics_df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download metrics CSV", data=csv_bytes,
-                           file_name=f"{program_name}_metrics.csv", mime="text/csv")
+        st.dataframe(
+            metrics_df.style.format({
+                "Mean Absolute Error (MAE)": "{:.3f}",
+                "Root Mean Square Error (RMSE)": "{:.3f}",
+                "Coefficient of Determination (R^2)": "{:.3f}",
+                "Adjusted R^2": "{:.3f}",
+                "Chi-squared": "{:.3f}",
+                "Reduced Chi-squared": "{:.3f}",
+            }),
+            use_container_width=True
+        )
+        st.download_button(
+            "⬇️ Download metrics CSV",
+            data=metrics_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"{program_name}_metrics.csv",
+            mime="text/csv",
+        )
 
         # Plots: 2x2 grid + 3D phase
         shift = -1 if label_shift_on else 0
