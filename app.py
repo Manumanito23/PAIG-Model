@@ -271,13 +271,13 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
 
 
 # ----------------- sidebar -----------------
-st.sidebar.title("PAIG Controls (Unweighted)")
+st.sidebar.title("PAIG Controls")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-
-ratio_toggle = st.sidebar.checkbox("Enforce α = r·δ", value=False)
-ratio_max   = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0, step=0.01, format="%.2f")
-max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
-save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
+estimate_y0 = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
+#ratio_toggle = st.sidebar.checkbox("Enforce α = r·δ", value=False)
+#ratio_max   = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0, step=0.01, format="%.2f")
+#max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
+#save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
@@ -321,6 +321,7 @@ with col_right:
                 df_slice,
                 program_name,
                 ratio_max=(float(ratio_max) if ratio_toggle else None),
+                fit_y0=estimate_y0,
                 max_nfev=int(max_nfev),
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
             )
