@@ -180,7 +180,7 @@ with col_right:
 
             # Compact summary
             cols = [
-                "program", "y0_mode", "y0_P", "y0_A", "y0_I", "y0_G",
+                "program", "y0_mode",
                 "rho", "alpha", "delta", "nu", "gamma", "alpha/delta",
                 "R2_global", "MSE_reduced", "RMSE_global",
             ]
