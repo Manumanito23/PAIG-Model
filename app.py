@@ -1,5 +1,7 @@
-# app.py (UNWEIGHTED) — keeps previous layout + metrics table + auto re-fit toggle
-# Streamlit UI for PAIG: unweighted NLS, y0 mode (estimated | zeros), year-label shift
+# app.py (UNWEIGHTED) — classic layout restored + auto y0 + metrics table
+# - Left column: Preview table + Year range slider (narrow width)
+# - Right column: y0 mode (auto or manual), parameters summary, metrics table, plots
+# - Pure unweighted nonlinear least squares (delegated to paig_fit_any_csv.py)
 
 import io
 import tempfile
@@ -32,14 +34,12 @@ def render_fit_png(
     dpi: int = 150,
     label_shift_years: int = 0,
 ) -> bytes:
-    """Render 2x2 plot: Model (line) vs Data (scatter)."""
     comps = [
         ("P", 0, "Passive students (P)"),
         ("A", 1, "Active students (A)"),
         ("I", 2, "Inactive students (I, cumulative)"),
         ("G", 3, "Graduated students (G, cumulative)"),
     ]
-
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
@@ -50,7 +50,7 @@ def render_fit_png(
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
-        # display-only shift of x tick labels
+        # display-only shift for x tick labels
         ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)+label_shift_years:d}"))
         ax.grid(True)
         ax.legend()
@@ -65,7 +65,6 @@ def render_fit_png(
     return buf.getvalue()
 
 def render_phase3d_png(name: str, df: pd.DataFrame, sol, dpi: int = 150) -> bytes:
-    """Render two 3D phase plots."""
     Pm, Am, Im, Gm = sol.y[0], sol.y[1], sol.y[2], sol.y[3]
     Pd = np.asarray(df["P"].values, float)
     Ad = np.asarray(df["A"].values, float)
@@ -94,7 +93,6 @@ def render_phase3d_png(name: str, df: pd.DataFrame, sol, dpi: int = 150) -> byte
     return buf.getvalue()
 
 def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
-    """Persist upload to a temp .csv and reuse the PAIG loader."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = Path(tmp.name)
@@ -122,92 +120,112 @@ gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   valu
 st.title("PAIG Model Explorer — Unweighted Nonlinear Least Squares")
 
 if not uploaded:
-    st.info("Upload a CSV to begin. Expected columns similar to your PAIG loader (Year, Passive, Active, I cumulative, G cumulative).")
+    st.info("Upload a CSV to begin. Expected columns similar to your loader (Year, Passive, Active, I cumulative, G cumulative).")
     st.stop()
 
-# Load and preview
+# Load
 try:
     df_full, program_name = load_program_csv_from_upload(uploaded)
 except Exception as e:
     st.error(f"Failed to parse CSV: {e}")
     st.stop()
 
-# Year range
 y_min, y_max = int(df_full["year"].min()), int(df_full["year"].max())
-yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max,
-                     value=(y_min, y_max), step=1, label_visibility="visible")
 
-# y0 mode: estimated vs zeros
-st.markdown("#### Initial condition at start of fit")
-y0_mode = st.radio(
-    " ",
-    options=[("estimated (fit y₀)", "estimated"), ("zeros (P=A=I=G=0)", "zeros")],
-    format_func=lambda x: x[0],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-y0_mode = y0_mode[1]  # "estimated" or "zeros"
+# Use two columns so the Preview table is not full width
+col_left, col_right = st.columns([1, 2], gap="large")
 
-# Preview table
-st.subheader("Preview")
-st.dataframe(df_full, use_container_width=True, height=320)
+with col_left:
+    st.subheader("Preview")
+    st.dataframe(df_full, height=340, use_container_width=False)  # narrow table
 
-# --- Fit section ---
-st.subheader("Fit")
+    # Year range slider stays in the left column under the table
+    yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max,
+                         value=(y_min, y_max), step=1, label_visibility="visible")
 
-# run criterion: auto or button
-should_run = auto_run or st.button("Run Fit with current initial guesses", type="primary")
+with col_right:
+    # y0 mode (auto or manual). We keep a small state variable so radio updates when year range changes
+    if "y0_mode" not in st.session_state:
+        st.session_state.y0_mode = "estimated"
 
-if should_run:
-    try:
-        df_slice = slice_df_by_year(df_full, yr0, yr1)
+    st.markdown("#### Initial condition at start of fit")
+    auto_y0 = st.checkbox("Auto-select (zeros if range starts at earliest year, else estimated)",
+                          value=True, help="Checked: selection follows the year range.")
 
-        summary, t_years, df_sorted, sol = paig.fit_program(
-            df_slice,
-            program_name,
-            init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
-            y0_mode=y0_mode,  # estimated vs zeros
-        )
+    # compute the auto choice
+    auto_choice = "zeros" if yr0 == y_min else "estimated"
+    if auto_y0:
+        st.session_state.y0_mode = auto_choice
 
-        # Compact parameter summary
-        cols = ["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]
-        st.dataframe(pd.DataFrame([summary])[cols], use_container_width=True)
+    # radio reflects current state; user can override only when auto_y0 is off
+    disabled = auto_y0
+    st.radio(
+        " ",
+        options=[("estimated (fit y₀)", "estimated"), ("zeros (P=A=I=G=0)", "zeros")],
+        format_func=lambda x: x[0],
+        horizontal=True,
+        key="y0_mode",
+        label_visibility="collapsed",
+        disabled=disabled,
+    )
+    y0_mode = st.session_state.y0_mode  # "estimated" or "zeros"
 
-        # Metrics table (unweighted; global uses 4D Euclidean residuals)
-        metrics_df = paig.metrics_table(df_sorted, sol, p=(9 if y0_mode=="estimated" else 5))
-        st.markdown("#### Statistical metrics")
-        st.dataframe(
-            metrics_df.style.format({
-                "Mean Absolute Error (MAE)": "{:.3f}",
-                "Root Mean Square Error (RMSE)": "{:.3f}",
-                "Coefficient of Determination (R^2)": "{:.3f}",
-                "Adjusted R^2": "{:.3f}",
-                "Chi-squared": "{:.3f}",
-                "Reduced Chi-squared": "{:.3f}",
-            }),
-            use_container_width=True
-        )
-        st.download_button(
-            "⬇️ Download metrics CSV",
-            data=metrics_df.to_csv(index=False).encode("utf-8"),
-            file_name=f"{program_name}_metrics.csv",
-            mime="text/csv",
-        )
+    # run condition: auto or button
+    should_run = auto_run or st.button("Run Fit with current initial guesses", type="primary")
 
-        # Plots: 2x2 grid + 3D phase
-        shift = -1 if label_shift_on else 0
-        png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, label_shift_years=shift)
-        st.image(png, use_container_width=True)
-        phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
-        st.image(phase_png, use_container_width=True, caption="3D phase plots")
+    if should_run:
+        try:
+            df_slice = slice_df_by_year(df_full, yr0, yr1)
 
-        # Optional: save PNGs to disk
-        if save_pngs:
-            outdir = Path("./paig_results")
-            outdir.mkdir(parents=True, exist_ok=True)
-            paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
-            paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
-            st.success(f"Saved on server: {outdir.resolve()}")
+            summary, t_years, df_sorted, sol = paig.fit_program(
+                df_slice,
+                program_name,
+                init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
+                y0_mode=y0_mode,  # estimated vs zeros
+            )
 
-    except Exception as e:
-        st.error(f"Fit failed: {e}")
+            # Parameter summary
+            st.dataframe(
+                pd.DataFrame([summary])[["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]],
+                use_container_width=True
+            )
+
+            # Metrics table (unweighted). p depends on y0_mode (estimated fits 9 params; zeros fits 5).
+            p = 9 if y0_mode == "estimated" else 5
+            metrics_df = paig.metrics_table(df_sorted, sol, p=p)
+            st.markdown("#### Statistical metrics")
+            st.dataframe(
+                metrics_df.style.format({
+                    "Mean Absolute Error (MAE)": "{:.3f}",
+                    "Root Mean Square Error (RMSE)": "{:.3f}",
+                    "Coefficient of Determination (R^2)": "{:.3f}",
+                    "Adjusted R^2": "{:.3f}",
+                    "Chi-squared": "{:.3f}",
+                    "Reduced Chi-squared": "{:.3f}",
+                }),
+                use_container_width=True
+            )
+            st.download_button(
+                "⬇️ Download metrics CSV",
+                data=metrics_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"{program_name}_metrics.csv",
+                mime="text/csv",
+            )
+
+            # Plots (2x2 + 3D)
+            shift = -1 if label_shift_on else 0
+            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, label_shift_years=shift)
+            st.image(png, use_container_width=True)
+            phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
+            st.image(phase_png, use_container_width=True, caption="3D phase plots")
+
+            # Optional: save PNGs
+            if save_pngs:
+                outdir = Path("./paig_results")
+                outdir.mkdir(parents=True, exist_ok=True)
+                paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
+                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
+                st.success(f"Saved on server: {outdir.resolve()}")
+
+        except Exception as e:
+            st.error(f"Fit failed: {e}")
