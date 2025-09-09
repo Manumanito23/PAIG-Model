@@ -130,14 +130,13 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
 st.sidebar.title("PAIG Controls (Unweighted)")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-# OPTIONAL: the two toggles that drive the fitter
-#ratio_toggle   = st.sidebar.checkbox("Enforce α = r·δ", value=False)
-#ratio_max_val  = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0,
-#                                         step=0.01, format="%.2f", help="Upper bound for r in α=r·δ")
+ratio_toggle   = st.sidebar.checkbox("Enforce α = r·δ", value=False)
+ratio_max_val  = st.sidebar.number_input("ratio_max", value=0.99, min_value=0.01, max_value=1.0,
+                                         step=0.01, format="%.2f", help="Upper bound for r in α=r·δ")
 estimate_y0    = st.sidebar.checkbox("Estimate initial conditions y0", value=False)
 
-#max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
-#save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
+max_nfev    = st.sidebar.number_input("max_nfev", value=500, min_value=100, max_value=5000, step=50)
+save_pngs   = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
