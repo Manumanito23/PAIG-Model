@@ -185,6 +185,90 @@ def series_metrics(y_true, y_pred):
     r2     = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
     return rmse, r2
 
+def metrics_table(df: pd.DataFrame, sol, p: int = 5) -> pd.DataFrame:
+    """
+    Build the table of statistics requested (UNWEIGHTED), with rows:
+      - Global (overall): uses 4D Euclidean residual per year
+      - P, A, I, G: computed per series (standard 1D formulas)
+    and columns:
+      'Mean Absolute Error (MAE)',
+      'Root Mean Square Error (RMSE)',
+      'Coefficient of Determination (R^2)',
+      'Adjusted R^2',
+      'Chi-squared',
+      'Reduced Chi-squared'
+
+    Notes
+    -----
+    * Global row uses one residual per time point: || [P,A,I,G]_model(t) - [P,A,I,G]_data(t) ||_2
+      so n = T (years) for adjusted R^2 and reduced chi-squared in the global row.
+    * Per-series rows use the usual 1D definitions with n = T.
+    * 'Chi-squared' is the unscaled SSE (sum of squared errors). If you have
+      known per-point variances, you could divide by those, but here we keep it
+      pure/unweighted as requested.
+    """
+    # Data / prediction in shape (T, 4)
+    Y_true = df[["P", "A", "I", "G"]].values.astype(float)   # (T, 4)
+    Y_pred = sol.y.T.astype(float)                           # (T, 4)
+    ERR    = Y_pred - Y_true                                 # (T, 4)
+    T = Y_true.shape[0]                                      # number of years
+
+    # ---------- per-series stats (1D) ----------
+    def series_stats(y_true: np.ndarray, y_pred: np.ndarray):
+        e   = y_pred - y_true
+        n   = len(y_true)
+        mae = float(np.mean(np.abs(e)))
+        rmse = float(np.sqrt(np.mean(e**2)))
+        ss_res = float(np.sum(e**2))
+        ss_tot = float(np.sum((y_true - np.mean(y_true))**2))
+        r2 = (1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan
+        # adjusted R^2 with p fitted parameters
+        if np.isfinite(r2) and (n - p - 1) > 0:
+            r2_adj = 1.0 - (1.0 - r2) * (n - 1) / (n - p - 1)
+        else:
+            r2_adj = np.nan
+        chi2 = ss_res
+        red_chi2 = chi2 / max(n - p, 1)
+        return mae, rmse, r2, r2_adj, chi2, red_chi2
+
+    rows = []
+    for j, label in enumerate(["P", "A", "I", "G"]):
+        rows.append((label, *series_stats(Y_true[:, j], Y_pred[:, j])))
+
+    # ---------- global row (4D Euclidean per year) ----------
+    # Euclidean residual per year: r_t = ||ERR[t, :]||_2
+    r_norm = np.linalg.norm(ERR, axis=1)            # (T,)
+    mae_g  = float(np.mean(r_norm))
+    rmse_g = float(np.sqrt(np.mean(r_norm**2)))
+    sse_g  = float(np.sum(r_norm**2))
+
+    # total 4D variance around the 4D mean (centroid)
+    mu = np.mean(Y_true, axis=0, keepdims=True)     # (1,4)
+    ss_tot_g = float(np.sum(np.sum((Y_true - mu)**2, axis=1)))
+    r2_g = (1.0 - sse_g / ss_tot_g) if ss_tot_g > 0 else np.nan
+    if np.isfinite(r2_g) and (T - p - 1) > 0:
+        r2_adj_g = 1.0 - (1.0 - r2_g) * (T - 1) / (T - p - 1)
+    else:
+        r2_adj_g = np.nan
+    chi2_g = sse_g
+    red_chi2_g = chi2_g / max(T - p, 1)
+
+    # assemble table
+    table = pd.DataFrame(
+        [("Global (overall)", mae_g, rmse_g, r2_g, r2_adj_g, chi2_g, red_chi2_g)] +
+        rows,
+        columns=[
+            "Series",
+            "Mean Absolute Error (MAE)",
+            "Root Mean Square Error (RMSE)",
+            "Coefficient of Determination (R^2)",
+            "Adjusted R^2",
+            "Chi-squared",
+            "Reduced Chi-squared",
+        ],
+    )
+    return table
+
 
 def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5):
     """
