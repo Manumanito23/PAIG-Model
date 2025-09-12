@@ -186,6 +186,22 @@ with col_right:
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
                 y0_mode=y0_mode,
             )
+            if summary["y0_mode"] == "zeros":
+                # years to display: previous calendar year + the data years
+                t_plot_years = np.r_[t_years[0] - 1, t_years]
+
+                # integrate on the augmented grid: [-1, 0, 1, 2, ...]
+                t_aug = t_plot_years - t_plot_years[0]       # [-1, 0, 1, ...]
+                y0_z  = np.zeros(4, dtype=float)
+                pars_hat = np.array(
+                    [summary["rho"], summary["alpha"], summary["delta"], summary["nu"], summary["gamma"]],
+                    dtype=float
+                )
+                sol_plot = paig.integrate_model(t_aug, y0_z, pars_hat)   # 4 x (T+1)
+            else:
+                # estimated y0: plot on the same grid we fitted
+                t_plot_years = t_years
+                sol_plot = sol
 
             st.dataframe(
                 pd.DataFrame([summary])[[
@@ -225,7 +241,7 @@ with col_right:
 
             # Plots
             shift = 1 if label_shift_on else 0
-            png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, label_shift_years=shift)
+            png = render_fit_png(program_name, t_plot_years, df_sorted, sol, dpi=150, label_shift_years=shift)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
