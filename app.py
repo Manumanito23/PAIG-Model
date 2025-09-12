@@ -149,12 +149,8 @@ with col_right:
 
     # Auto decision: zeros if range starts at the earliest year, else estimated
     auto_choice = "zeros" if yr0 == y_min else "estimated"
-    auto_y0 = st.checkbox(
-        "Auto-select (zeros if range starts at earliest year, else estimated)",
-        value=True
-    )
 
-    labels = ["estimated (fit y₀)", "zeros (P=A=I=G=0)"]
+    labels = ["estimated (fit y₀)", "zeros (P=A=I=G=0 at previous year)"]
     label_to_mode = {labels[0]: "estimated", labels[1]: "zeros"}
     mode_to_index = {"estimated": 0, "zeros": 1}
 
@@ -167,7 +163,7 @@ with col_right:
         y0_mode = auto_choice
         st.session_state.y0_mode = auto_choice
     else:
-        current_idx = mode_to_index.get(st.session_state.y0_mode, mode_to_index["estimated"])
+        current_idx = mode_to_index.get(st.session_state.y0_mode, 0)
         sel_label = st.radio(" ", labels, index=current_idx, horizontal=True, label_visibility="collapsed")
         y0_mode = label_to_mode[sel_label]
         st.session_state.y0_mode = y0_mode
