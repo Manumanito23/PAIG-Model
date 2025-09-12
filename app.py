@@ -197,7 +197,8 @@ with col_right:
             # Metrics table (unweighted). p depends on y0_mode (estimated fits 9 params; zeros fits 5).
             p = 9 if y0_mode == "estimated" else 5
             metrics_df = paig.metrics_table(df_sorted, sol, p=p)
-            st.markdown("### Metrics")
+
+            st.markdown("#### Statistical metrics")
             st.dataframe(
                 metrics_df.style.format({
                     "Mean Absolute Error (MAE)": "{:.3f}",
@@ -206,17 +207,20 @@ with col_right:
                     "Adjusted R^2": "{:.3f}",
                     "Chi-squared": "{:.3f}",
                     "Reduced Chi-squared": "{:.3f}",
-                    "p-value (χ², Poisson)": "{:.3g}",
                 }),
                 use_container_width=True
             )
 
-            # χ² decision line (same test the table uses for the Global row)
-            decision = "✅ Accept (adequate)" if summary["chi2_p_value"] >= 0.05 else "❌ Reject (inadequate)"
-            st.markdown(
-                f"**χ² test (Poisson variances)**: χ² = {summary['chi2_global']:.2f}  "
-                f"with dof = {summary['chi2_dof']},  p = {summary['chi2_p_value']:.3g}.  "
-                f"Decision @ α = 0.050: **{decision}**."
+            # If you want the chi-square p-value sentence under the table, use the values
+            # that fit_program already puts into the summary:
+            chi2 = float(summary.get("chi2_global", float("nan")))
+            dof  = int(summary.get("chi2_dof", 1))
+            pval = float(summary.get("chi2_p_value", float("nan")))
+            alpha = 0.05
+            decision = "✅ Accept (adequate)" if pval >= alpha else "❌ Reject (inadequate)"
+            st.caption(
+                f"χ² test (Poisson variances): χ² = {chi2:.2f} with dof = {dof}, p = {pval:.4g}. "
+                f"Decision @ α = {alpha:.3f}: {decision}."
             )
 
             # Plots
