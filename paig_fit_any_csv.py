@@ -434,7 +434,8 @@ def fit_program(df: pd.DataFrame,
 
     metrics = {}
     for idx, comp in enumerate(["P", "A", "I", "G"]):
-        rmse, r2 = series_metrics(df[comp].values, sol.y[idx])
+        mae, rmse, r2 = series_metrics(df[comp].values, sol.y[idx])
+        metrics[f"MAE_{comp}"]  = mae
         metrics[f"RMSE_{comp}"] = rmse
         metrics[f"R2_{comp}"]   = r2
 
