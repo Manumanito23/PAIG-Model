@@ -107,7 +107,7 @@ st.sidebar.title("PAIG Controls (Unweighted)")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
-label_shift_on = st.sidebar.checkbox("Shift year labels by -1 (display only)", value=False)
+label_shift_on = st.sidebar.checkbox("Shift year labels by 1 (display only)", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
@@ -220,7 +220,7 @@ with col_right:
             )
 
             # Plots
-            shift = -1 if label_shift_on else 0
+            shift = 1 if label_shift_on else 0
             png = render_fit_png(program_name, t_years, df_sorted, sol, dpi=150, label_shift_years=shift)
             st.image(png, use_container_width=True)
             phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
