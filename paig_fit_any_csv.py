@@ -138,7 +138,6 @@ def residuals_unconstrained(pars, t_eval, y0, data_mat):
     res = sol.y - data_mat  # (4, T)
     return res.ravel()
 
-
 def residuals_unconstrained_y0free(pars_ext, t_eval, data_mat):
     """
     Fit the 5 PAIG parameters **and** the initial condition y0 (4 unknowns).
@@ -156,6 +155,24 @@ def residuals_unconstrained_y0free(pars_ext, t_eval, data_mat):
     res = sol.y - data_mat
     return res.ravel()
 
+def residuals_zeros_tminus1(pars, t_eval_data, data_mat):
+    """
+    Mode 'zeros@year-1':
+      Integrate from t=-1 with y0=(0,0,0,0) to t_eval_data (which starts at 0),
+      and compare ONLY against data at t>=0 (discard the column at t=-1).
+    """
+    pars = np.clip(np.asarray(pars, float), 1e-12, None)
+    y0 = np.zeros(4, dtype=float)
+
+    # Integrate one year earlier:
+    t_aug = np.r_[-1.0, t_eval_data]                 # [-1, 0, 1, 2, ...]
+    sol = integrate_model(t_aug, y0, pars)
+    if not sol.success:
+        return np.ones(data_mat.size) * 1e6
+
+    pred_at_data = sol.y[:, 1:]                      # discard the column at t=-1
+    res = pred_at_data - data_mat                    # data_mat is (4, T)
+    return res.ravel()
 
 # ------------------------------
 # Derived helpers & metrics (UNWEIGHTED)
@@ -169,13 +186,11 @@ def eigenvalues(alpha, delta, nu, gamma):
     lam2 = (-a - sqrt_disc) / 2
     return lam1, lam2
 
-
 def steady_state(rho, alpha, delta, nu, gamma):
     denom = (alpha + nu) * (delta + gamma) - alpha * delta
     P_star = rho * (delta + gamma) / denom
     A_star = rho * alpha / denom
     return P_star, A_star
-
 
 def series_metrics(y_true, y_pred):
     """
@@ -191,7 +206,6 @@ def series_metrics(y_true, y_pred):
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
     return mae, rmse, r2
 
-
 def _chi2_poisson(e: np.ndarray, mu: np.ndarray, eps: float = 1e-9) -> float:
     """
     Pearson chi-square for count-like data: sum (e^2 / mu).
@@ -199,7 +213,6 @@ def _chi2_poisson(e: np.ndarray, mu: np.ndarray, eps: float = 1e-9) -> float:
     """
     mu_safe = np.maximum(np.asarray(mu, float), eps)
     return float(np.sum((np.asarray(e, float) ** 2) / mu_safe))
-
 
 def metrics_table(df: pd.DataFrame, sol, p: int = 5) -> pd.DataFrame:
     """
@@ -301,7 +314,6 @@ def metrics_table(df: pd.DataFrame, sol, p: int = 5) -> pd.DataFrame:
     )
     return table
 
-
 def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5):
     """
     Overall (unweighted) metrics across the 4 series.
@@ -339,17 +351,16 @@ def fit_program(df: pd.DataFrame,
     Fit PAIG parameters to one dataset.
 
     y0_mode:
-      - "zeros":     start from [0,0,0,0] at the first selected year
-      - "estimated": treat y0 = [P0, A0, I0, G0] as 4 extra free parameters
-
-    Returns: (summary, t_years, df_sorted, sol)
+      - "estimated": fit y0 = [P0, A0, I0, G0] as 4 extra parameters
+      - "zeros":     start at t = -1 with y0=(0,0,0,0), integrate one year,
+                     then compare only from t=0 to the data (replaces old zeros mode)
     """
     df = df.sort_values("year").reset_index(drop=True)
     t_years = df["year"].values
     t = t_years - t_years[0]
 
     data_mat = df[["P", "A", "I", "G"]].T.values
-    y0_data  = data_mat[:, 0]  # used only as a *starting guess* if we fit y0
+    y0_data  = data_mat[:, 0]  # only a starting guess when y0 is free
 
     # ---- initial guesses for parameters
     if "enrolled_in_year" in df.columns:
@@ -372,16 +383,13 @@ def fit_program(df: pd.DataFrame,
 
     # ---- build optimization problem
     if y0_mode == "zeros":
-        # Fit only the 5 parameters; y0 is fixed at zeros
-        y0 = np.zeros(4, dtype=float)
+        # New zeros = “previous year with zero stocks”
         x0 = np.array([rho0, alpha0, delta0, nu0, gamma0], float)
         lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6])
         ub = np.array([1e6,  5.0,  5.0,  5.0,  1.0])
-        fun = lambda x: residuals_unconstrained(x, t, y0, data_mat)
+        fun = lambda x: residuals_zeros_tminus1(x, t, data_mat)
         p_count = 5
-        y0_used = y0
-    else:
-        # y0_mode == "estimated": fit 5 parameters + 4 initial conditions
+    else:  # "estimated"
         x0 = np.array([rho0, alpha0, delta0, nu0, gamma0,
                        y0_data[0], y0_data[1], y0_data[2], y0_data[3]], float)
         lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6,
@@ -390,60 +398,63 @@ def fit_program(df: pd.DataFrame,
                        1e7, 1e7, 1e7, 1e7])
         fun = lambda x: residuals_unconstrained_y0free(x, t, data_mat)
         p_count = 9
-        y0_used = None   # filled after optimize
 
     # Unweighted nonlinear least squares (pure L2)
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='linear', #Better results with soft_l1 but its not pure L2
+                        loss='linear',
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
-    # ---- extract results
-    if y0_mode == "zeros":
-        rho, alpha, delta, nu, gamma = res.x
-    else:
+    # ---- extract results & build solution aligned with data
+    if y0_mode == "estimated":
         rho, alpha, delta, nu, gamma, yP0, yA0, yI0, yG0 = res.x
+        pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
         y0_used = np.array([yP0, yA0, yI0, yG0], float)
+        sol = integrate_model(t, y0_used, pars_hat)
+    else:  # zeros = previous year with zeros
+        rho, alpha, delta, nu, gamma = res.x
+        pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
+        t_aug = np.r_[-1.0, t]
+        y0_z  = np.zeros(4, dtype=float)
+        sol_full = integrate_model(t_aug, y0_z, pars_hat)
+        pred = sol_full.y[:, 1:]  # keep only t >= 0
 
-    pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
+        class _Sol: pass
+        sol = _Sol()
+        sol.y = pred
+        sol.t = t
+        sol.success = sol_full.success
+        y0_used = y0_z.copy()
 
-    # Derived quantities
-    P_star, A_star = steady_state(rho, alpha, delta, nu, gamma)
-    lam1, lam2     = eigenvalues(alpha, delta, nu, gamma)
-    ratio          = alpha / delta
+    # ---- derived quantities & metrics (unchanged)
+    P_star, A_star = steady_state(*pars_hat)
+    lam1, lam2     = eigenvalues(pars_hat[1], pars_hat[2], pars_hat[3], pars_hat[4])
+    ratio          = pars_hat[1] / pars_hat[2]
 
-    # Final simulation with the fitted values
-    sol = integrate_model(t, y0_used, pars_hat)
-
-    # Per-series metrics
     metrics = {}
     for idx, comp in enumerate(["P", "A", "I", "G"]):
-        mae, rmse, r2 = series_metrics(df[comp].values, sol.y[idx])
-        metrics[f"MAE_{comp}"]  = mae
+        rmse, r2 = series_metrics(df[comp].values, sol.y[idx])
         metrics[f"RMSE_{comp}"] = rmse
         metrics[f"R2_{comp}"]   = r2
 
-    # Global metrics (unweighted) using p = number of fitted parameters
     R2_global, MSE_reduced, RMSE_global = global_gof_metrics(df, sol, p=p_count)
     metrics["R2_global"]   = R2_global
     metrics["MSE_reduced"] = MSE_reduced
     metrics["RMSE_global"] = RMSE_global
 
-    # Pearson/Poisson χ² p-value (reporting only; fit stays unweighted)
-    # Sum across all 4 series for the global test
-    ERR = (sol.y - df[["P","A","I","G"]].T.values).T     # (T,4)
-    CHI2_poi_global = _chi2_poisson(ERR, sol.y.T)        # Σ e^2 / ŷ over all coords
+    ERR = (sol.y - df[["P","A","I","G"]].T.values).T
+    CHI2_poi_global = _chi2_poisson(ERR, sol.y.T)
     dof_chi2        = max(4 * len(df) - p_count, 1)
     p_value_global  = float(1.0 - chi2_dist.cdf(CHI2_poi_global, df=dof_chi2))
-    metrics["chi2_global"] = CHI2_poi_global
-    metrics["chi2_dof"]    = dof_chi2
-    metrics["chi2_p_value"] = p_value_global
+    metrics["chi2_global"]   = CHI2_poi_global
+    metrics["chi2_dof"]      = dof_chi2
+    metrics["chi2_p_value"]  = p_value_global
 
-    # Summary row
     summary = {
         "program": program_name,
-        "rho": rho, "alpha": alpha, "delta": delta, "nu": nu, "gamma": gamma,
+        "rho": pars_hat[0], "alpha": pars_hat[1], "delta": pars_hat[2],
+        "nu": pars_hat[3],  "gamma": pars_hat[4],
         "alpha/delta": ratio, "P*": P_star, "A*": A_star,
         "lambda1": lam1, "lambda2": lam2,
         "y0_mode": y0_mode,
