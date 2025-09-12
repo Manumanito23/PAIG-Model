@@ -42,9 +42,15 @@ def render_fit_png(
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
-        ax.plot(t_years, sol.y[idx], 'r-', label="Model", linewidth=2)
+
+        # ---- robust plot: trim to common length (prevents length mismatch crashes)
+        x_model = np.asarray(t_years, float)
+        y_model = np.asarray(sol.y[idx], float)
+        m = min(len(x_model), len(y_model))
+        ax.plot(x_model[:m], y_model[:m], 'r-', label="Model", linewidth=2)
+
         ax.scatter(df["year"].values, df[comp].values, s=18, label="Data")
-        y_max = float(max(np.nanmax(sol.y[idx]), np.nanmax(df[comp].values)))
+        y_max = float(max(np.nanmax(y_model[:m]), np.nanmax(df[comp].values)))
         ax.set_ylim(0.0, max(1.0, y_max * 1.1))
         ax.set_title(title)
         ax.set_xlabel("Year")
@@ -186,6 +192,8 @@ with col_right:
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
                 y0_mode=y0_mode,
             )
+
+            # ---- Build plotting grid/solution (prevents x/y length mismatch)
             if summary["y0_mode"] == "zeros":
                 # years to display: previous calendar year + the data years
                 t_plot_years = np.r_[t_years[0] - 1, t_years]
@@ -199,14 +207,11 @@ with col_right:
                 )
                 sol_plot = paig.integrate_model(t_aug, y0_z, pars_hat)   # 4 x (T+1)
             else:
-                # estimated y0: plot on the same grid we fitted
                 t_plot_years = t_years
                 sol_plot = sol
 
             st.dataframe(
-                pd.DataFrame([summary])[[
-                    "program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"
-                ]],
+                pd.DataFrame([summary])[["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]],
                 use_container_width=True
             )
 
@@ -227,8 +232,7 @@ with col_right:
                 use_container_width=True
             )
 
-            # If you want the chi-square p-value sentence under the table, use the values
-            # that fit_program already puts into the summary:
+            # χ² p-value caption (already computed inside fit_program)
             chi2 = float(summary.get("chi2_global", float("nan")))
             dof  = int(summary.get("chi2_dof", 1))
             pval = float(summary.get("chi2_p_value", float("nan")))
@@ -239,18 +243,19 @@ with col_right:
                 f"Decision @ α = {alpha:.3f}: {decision}."
             )
 
-            # Plots
+            # Plots (use the plotting grid/solution so lengths always match)
             shift = 1 if label_shift_on else 0
-            png = render_fit_png(program_name, t_plot_years, df_sorted, sol, dpi=150, label_shift_years=shift)
+            png = render_fit_png(program_name, t_plot_years, df_sorted, sol_plot, dpi=150, label_shift_years=shift)
             st.image(png, use_container_width=True)
-            phase_png = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
+            phase_png = render_phase3d_png(program_name, df_sorted, sol_plot, dpi=150)
             st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
             if save_pngs:
                 outdir = Path("./paig_results")
                 outdir.mkdir(parents=True, exist_ok=True)
-                paig.save_series_grid_plot(outdir, program_name, t_years, df_sorted, sol)
-                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
+                # save exactly what is shown
+                paig.save_series_grid_plot(outdir, program_name, t_plot_years, df_sorted, sol_plot)
+                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol_plot)
                 st.success(f"Saved on server: {outdir.resolve()}")
 
         except Exception as e:
