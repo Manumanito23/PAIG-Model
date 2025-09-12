@@ -149,7 +149,11 @@ with col_right:
 
     # Auto decision: zeros if range starts at the earliest year, else estimated
     auto_choice = "zeros" if yr0 == y_min else "estimated"
-
+    auto_y0 = st.checkbox(
+        "Auto-select (zeros if range starts at earliest year, else estimated)",
+        value=True,
+        key="auto_y0",
+    )
     labels = ["estimated (fit y₀)", "zeros (P=A=I=G=0 at previous year)"]
     label_to_mode = {labels[0]: "estimated", labels[1]: "zeros"}
     mode_to_index = {"estimated": 0, "zeros": 1}
