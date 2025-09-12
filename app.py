@@ -210,12 +210,6 @@ with col_right:
                 }),
                 use_container_width=True
             )
-            st.download_button(
-                "⬇️ Download metrics CSV",
-                data=metrics_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"{program_name}_metrics.csv",
-                mime="text/csv",
-            )
 
             # χ² decision line (same test the table uses for the Global row)
             decision = "✅ Accept (adequate)" if summary["chi2_p_value"] >= 0.05 else "❌ Reject (inadequate)"

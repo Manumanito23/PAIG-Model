@@ -396,7 +396,7 @@ def fit_program(df: pd.DataFrame,
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='linear',
+                        loss='linear', #Better results with soft_l1 but its not pure L2
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # ---- extract results
