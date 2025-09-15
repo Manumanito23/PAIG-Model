@@ -96,6 +96,49 @@ def render_phase3d_png(name: str, df: pd.DataFrame, sol, dpi: int = 150) -> byte
     plt.close(fig)
     return buf.getvalue()
 
+# --- Residual plots -----------------------------------------------------------
+def show_residual_plots(t_years, df_sorted, sol):
+    """
+    Draw 5 residual plots:
+      - Four time series residuals: P, A, I, G (Data - Model), each centered at 0
+      - One Euclidean residual norm ||r||_2 across P,A,I,G
+    """
+    # Data matrix (T x 4) and model predictions (T x 4)
+    data = df_sorted[["P", "A", "I", "G"]].to_numpy()       # shape (T,4)
+    pred = sol.y.T                                          # shape (T,4)
+    resid = data - pred                                     # residuals r_t = y_t - ŷ_t
+
+    names = ["P", "A", "I", "G"]
+
+    # ---- 4 residual time-series (2x2)
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
+    for i, ax in enumerate(axes.ravel()):
+        r = resid[:, i]
+        ax.axhline(0.0, color="k", lw=1, alpha=0.5)
+        ax.plot(t_years, r, marker="o", lw=1.5)
+        ax.set_title(f"Residuals: {names[i]}")
+        ax.set_ylabel("Data − Model")
+        # symmetric y-limits around zero (helps visual diagnosis)
+        m = float(np.nanmax(np.abs(r))) if r.size else 1.0
+        ax.set_ylim(-1.05 * m, 1.05 * m)
+        ax.grid(True, alpha=0.3)
+
+    axes[1, 0].set_xlabel("Year")
+    axes[1, 1].set_xlabel("Year")
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+    # ---- Euclidean residual norm
+    euclid = np.sqrt((resid ** 2).sum(axis=1))              # ||r_t||_2
+    fig2, ax = plt.subplots(figsize=(11, 3.8))
+    ax.plot(t_years, euclid, marker="o", lw=1.5)
+    ax.set_title("Euclidean residual norm across P, A, I, G")
+    ax.set_xlabel("Year")
+    ax.set_ylabel("‖residual‖₂")
+    ax.set_ylim(bottom=0)                                   # norma es no-negativa
+    ax.grid(True, alpha=0.3)
+    fig2.tight_layout()
+    st.pyplot(fig2, clear_figure=True)
 
 def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
@@ -246,6 +289,15 @@ with col_right:
             # Graph 3D (2 panels)
             png3d = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(png3d, use_container_width=True)
+
+            # Graph residual plots
+            with st.expander("Residual analysis (time series)", expanded=False):
+                show_residual_plots(t_years, df_sorted, sol)
+                st.caption(
+                    "Residuals are defined as Data − Model. "
+                    "Panels show per-series residuals (P, A, I, G) centered at 0, "
+                    "and the global Euclidean residual norm across the four series."
+                )
 
             # Saving the pngs
             if save_pngs:
