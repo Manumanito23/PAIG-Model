@@ -124,7 +124,7 @@ gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   valu
 st.sidebar.markdown("---")
 loss_choice = st.sidebar.radio(
     "Loss function",
-    options=["soft_l1", "linear"],
+    options=["linear", "soft_l1"],
     index=0,
     help="‘soft_l1’ is robust to outliers; ‘linear’ is standard least squares."
 )
