@@ -372,7 +372,7 @@ def fit_program(df: pd.DataFrame,
 
     # 3) Initial condition y(0) comes from the first observation.
     #    y0 = [P0, A0, I0, G0]^T
-    y0_data  = data_mat[:, 0]  # only a starting guess when y0 is free
+    y0_data  = data_mat[:, 0].copy()  # only a starting guess when y0 is free
 
     # 4) Initial guesses (heuristics). Better guesses -> faster/robuster convergence.
     if "enrolled_in_year" in df.columns:
@@ -443,17 +443,17 @@ def fit_program(df: pd.DataFrame,
         y0_z  = np.zeros(4, dtype=float)
         sol_full = integrate_model(t_aug, y0_z, pars_hat)
         pred = sol_full.y[:, 1:]  # keep only t >= 0
-    else:
-        rho, alpha, delta, nu, gamma = res.x
-        pars_hat = np.array([rho, alpha, delta, nu, gamma], dtype=float)
-        sol = integrate_model(t, y0_data, pars_hat)
-
         class _Sol: pass
         sol = _Sol()
         sol.y = pred
         sol.t = t
         sol.success = sol_full.success
-        y0_used = y0_z.copy()
+        y0_used = y0_z
+    else:
+        rho, alpha, delta, nu, gamma = res.x
+        pars_hat = np.array([rho, alpha, delta, nu, gamma], dtype=float)
+        y0_used  = y0_data.copy()
+        sol = integrate_model(t, y0_used, pars_hat)
 
     # ---- derived quantities & metrics (unchanged)
     P_star, A_star = steady_state(*pars_hat)
