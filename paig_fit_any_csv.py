@@ -361,25 +361,36 @@ def fit_program(df: pd.DataFrame,
       - "soft_l1": robust loss
       - "linear":  pure LS
     """
+    # 1) Ensure chronological order and build a shifted time axis t with t[0] = 0.
     df = df.sort_values("year").reset_index(drop=True)
-    t_years = df["year"].values
-    t = t_years - t_years[0]
+    t_years = df["year"].values                  # e.g., [2013, 2014, ...]
+    t = t_years - t_years[0]                     # numerical integration prefers small times
 
+    # 2) Stack the observed series into a 4 x T matrix in the order [P; A; I; G].
+    #    Transpose so rows are series and columns are time points.
     data_mat = df[["P", "A", "I", "G"]].T.values
+
+    # 3) Initial condition y(0) comes from the first observation.
+    #    y0 = [P0, A0, I0, G0]^T
     y0_data  = data_mat[:, 0]  # only a starting guess when y0 is free
 
-    # ---- initial guesses for parameters
+    # 4) Initial guesses (heuristics). Better guesses -> faster/robuster convergence.
     if "enrolled_in_year" in df.columns:
+        # Use the typical annual enrolment as a first guess for rho (>= 1 to avoid exact zero).
         rho0 = max(1.0, float(np.nanmedian(df["enrolled_in_year"].values)))
     else:
+        # Fallback: approximate rho as the trend in (P + A) over the window.
         PA = df["P"].values + df["A"].values
-        rho0 = max(1.0, float((PA[-1] - PA[0]) / max(t[-1], 1.0))) if len(PA) >= 2 else 50.0
-
+        if len(PA) >= 2:
+            rho0 = max(1.0, float((PA[-1] - PA[0]) / max(t[-1], 1.0)))
+        else:
+            rho0 = 50.0  # extremely short series: just pick a modest positive inflow
+    # Reasonable per-year starting rates for slow educational dynamics:
     alpha0 = 0.4
     delta0 = 0.6
     nu0    = 0.8
     gamma0 = 0.02
-
+    # Allow external initial guesses from UI sliders
     if init_guess is not None:
         rho0   = float(init_guess.get("rho",    rho0))
         alpha0 = float(init_guess.get("alpha",  alpha0))
@@ -387,7 +398,7 @@ def fit_program(df: pd.DataFrame,
         nu0    = float(init_guess.get("nu",     nu0))
         gamma0 = float(init_guess.get("gamma",  gamma0))
 
-    # ---- build optimization problem
+    # 5) build optimization problem
     if y0_mode == "zeros":
         # “previous year with zero stocks”
         x0 = np.array([rho0, alpha0, delta0, nu0, gamma0], float)
@@ -416,7 +427,7 @@ def fit_program(df: pd.DataFrame,
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss=loss,               # <<--- usa la pérdida elegida
+                        loss=loss,               # linear or soft_l1
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # ---- extract results & build solution aligned with data
@@ -425,13 +436,17 @@ def fit_program(df: pd.DataFrame,
         pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
         y0_used = np.array([yP0, yA0, yI0, yG0], float)
         sol = integrate_model(t, y0_used, pars_hat)
-    else:  # zeros = previous year with zeros
+    elif y0_mode == "zeros":  # zeros = previous year with zeros
         rho, alpha, delta, nu, gamma = res.x
         pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
         t_aug = np.r_[-1.0, t]
         y0_z  = np.zeros(4, dtype=float)
         sol_full = integrate_model(t_aug, y0_z, pars_hat)
         pred = sol_full.y[:, 1:]  # keep only t >= 0
+    else:
+        rho, alpha, delta, nu, gamma = res.x
+        pars_hat = np.array([rho, alpha, delta, nu, gamma], dtype=float)
+        sol = integrate_model(t, y0_data, pars_hat)
 
         class _Sol: pass
         sol = _Sol()
