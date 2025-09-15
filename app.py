@@ -1,5 +1,4 @@
-# app.py (UNWEIGHTED) — explicit Fit button + auto y0 + metrics table + χ² p-value
-
+# app.py — PAIG Explorer (unweighted NLS) with loss selector and 3 y0 modes
 import io
 import tempfile
 from pathlib import Path
@@ -14,7 +13,7 @@ import streamlit as st
 
 import paig_fit_any_csv as paig
 
-st.set_page_config(page_title="PAIG Model Explorer (Unweighted)", layout="wide")
+st.set_page_config(page_title="PAIG Model Explorer", layout="wide")
 
 
 # ----------------- helpers -----------------
@@ -43,7 +42,7 @@ def render_fit_png(
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
 
-        # ---- robust plot: trim to common length (prevents length mismatch crashes)
+        # robust: recorta a longitud común por si el solver devuelve 1 punto menos
         x_model = np.asarray(t_years, float)
         y_model = np.asarray(sol.y[idx], float)
         m = min(len(x_model), len(y_model))
@@ -55,7 +54,6 @@ def render_fit_png(
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
-        # display-only shift for x tick labels
         ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)+label_shift_years:d}"))
         ax.grid(True)
         ax.legend()
@@ -109,19 +107,27 @@ def load_program_csv_from_upload(uploaded_file) -> Tuple[pd.DataFrame, str]:
 
 
 # ----------------- sidebar -----------------
-st.sidebar.title("PAIG Controls (Unweighted)")
+st.sidebar.title("PAIG Controls")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
 save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 label_shift_on = st.sidebar.checkbox("Shift year labels by 1 (display only)", value=False)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Initial guesses used by the optimizer (pure NLS, unweighted)")
+st.sidebar.caption("Initial guesses for the optimizer (pure, unweighted NLS)")
 rho0   = st.sidebar.slider("rho (inflow)",  min_value=1.0, max_value=500.0, value=200.0, step=1.0)
 alpha0 = st.sidebar.slider("alpha",         min_value=0.0, max_value=1.0,   value=0.4,   step=0.01)
 delta0 = st.sidebar.slider("delta",         min_value=0.0, max_value=1.0,   value=0.6,   step=0.01)
 nu0    = st.sidebar.slider("nu",            min_value=0.0, max_value=1.0,   value=0.8,   step=0.01)
 gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   value=0.02,  step=0.001)
+
+st.sidebar.markdown("---")
+loss_choice = st.sidebar.radio(
+    "Loss function",
+    options=["soft_l1", "linear"],
+    index=0,
+    help="‘soft_l1’ is robust to outliers; ‘linear’ is standard least squares."
+)
 
 
 # ----------------- main -----------------
@@ -150,75 +156,69 @@ with col_left:
                          value=(y_min, y_max), step=1, label_visibility="visible")
 
 with col_right:
-    # --- y0 selection with safe logic ---
-    st.markdown("#### Initial condition at start of fit")
+    st.markdown("#### Initial condition at start of fit (y₀)")
 
-    # Auto decision: zeros if range starts at the earliest year, else estimated
-    auto_choice = "zeros" if yr0 == y_min else "estimated"
-    auto_y0 = st.checkbox(
-        "Auto-select (zeros if range starts at earliest year, else estimated)",
-        value=True,
-        key="auto_y0",
-    )
-    labels = ["estimated (fit y₀)", "zeros (P=A=I=G=0 at previous year)"]
-    label_to_mode = {labels[0]: "estimated", labels[1]: "zeros"}
-    mode_to_index = {"estimated": 0, "zeros": 1}
-
+    # 3 options: estimated / zeros / data
+    # Default practical value: if range starts from first year, "zeros"; if not, "estimated".
+    default_mode = "zeros" if yr0 == y_min else "estimated"
+    labels = {
+        "estimated": "estimated (fit y₀)",
+        "zeros":     "zeros (P=A=I=G=0 at previous year)",
+        "data":      "data (use first-year observation)"
+    }
+    # selectiont between modes
     if "y0_mode" not in st.session_state:
-        st.session_state.y0_mode = auto_choice
+        st.session_state.y0_mode = default_mode
+    # radio visible
+    selected_label = st.radio(
+        " ",
+        options=[labels["estimated"], labels["zeros"], labels["data"]],
+        index=["estimated","zeros","data"].index(st.session_state.y0_mode),
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    inv = {v:k for k,v in labels.items()}
+    y0_mode = inv[selected_label]
+    st.session_state.y0_mode = y0_mode
 
-    if auto_y0:
-        idx = mode_to_index[auto_choice]
-        st.radio(" ", labels, index=idx, horizontal=True, disabled=True, label_visibility="collapsed")
-        y0_mode = auto_choice
-        st.session_state.y0_mode = auto_choice
-    else:
-        current_idx = mode_to_index.get(st.session_state.y0_mode, 0)
-        sel_label = st.radio(" ", labels, index=current_idx, horizontal=True, label_visibility="collapsed")
-        y0_mode = label_to_mode[sel_label]
-        st.session_state.y0_mode = y0_mode
-
-    # --- explicit Fit button ---
     run = st.button("Run Fit with current initial guesses", type="primary")
 
     if run:
         try:
             df_slice = slice_df_by_year(df_full, yr0, yr1)
 
-            # Fit (pure unweighted); y0_mode controls estimated vs zeros
+            # Adjust (unweighted); p depends of y0_mode (5 or 9)
             summary, t_years, df_sorted, sol = paig.fit_program(
                 df_slice,
                 program_name,
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
                 y0_mode=y0_mode,
+                loss=loss_choice,
             )
 
-            # ---- Build plotting grid/solution (prevents x/y length mismatch)
+            # To graph: if y0_mode == "zeros", we add the previous year
             if summary["y0_mode"] == "zeros":
-                # years to display: previous calendar year + the data years
                 t_plot_years = np.r_[t_years[0] - 1, t_years]
-
-                # integrate on the augmented grid: [-1, 0, 1, 2, ...]
-                t_aug = t_plot_years - t_plot_years[0]       # [-1, 0, 1, ...]
-                y0_z  = np.zeros(4, dtype=float)
+                t_aug = t_plot_years - t_plot_years[0]
+                y0_z = np.zeros(4, dtype=float)
                 pars_hat = np.array(
                     [summary["rho"], summary["alpha"], summary["delta"], summary["nu"], summary["gamma"]],
                     dtype=float
                 )
-                sol_plot = paig.integrate_model(t_aug, y0_z, pars_hat)   # 4 x (T+1)
+                sol_plot = paig.integrate_model(t_aug, y0_z, pars_hat)
             else:
                 t_plot_years = t_years
                 sol_plot = sol
 
+            # Summary
             st.dataframe(
-                pd.DataFrame([summary])[["program","y0_mode","rho","alpha","delta","nu","gamma","alpha/delta"]],
+                pd.DataFrame([summary])[["program","y0_mode","loss","rho","alpha","delta","nu","gamma","alpha/delta"]],
                 use_container_width=True
             )
 
-            # Metrics table (unweighted). p depends on y0_mode (estimated fits 9 params; zeros fits 5).
+            # Metrics (p = 9 if estimated, p = 5 if zeros or data)
             p = 9 if y0_mode == "estimated" else 5
             metrics_df = paig.metrics_table(df_sorted, sol, p=p)
-
             st.markdown("#### Statistical metrics")
             st.dataframe(
                 metrics_df.style.format({
@@ -232,31 +232,27 @@ with col_right:
                 use_container_width=True
             )
 
-            # χ² p-value caption (already computed inside fit_program)
-            chi2 = float(summary.get("chi2_global", float("nan")))
-            dof  = int(summary.get("chi2_dof", 1))
-            pval = float(summary.get("chi2_p_value", float("nan")))
-            alpha = 0.05
-            decision = "✅ Accept (adequate)" if pval >= alpha else "❌ Reject (inadequate)"
-            st.caption(
-                f"χ² test (Poisson variances): χ² = {chi2:.2f} with dof = {dof}, p = {pval:.4g}. "
-                f"Decision @ α = {alpha:.3f}: {decision}."
+            # Graph 2x2
+            png = render_fit_png(
+                program_name,
+                t_plot_years if not label_shift_on else (t_plot_years - 1),
+                df_sorted,
+                sol_plot,
+                dpi=150,
+                label_shift_years=(1 if label_shift_on else 0),
             )
-
-            # Plots (use the plotting grid/solution so lengths always match)
-            shift = 1 if label_shift_on else 0
-            png = render_fit_png(program_name, t_plot_years, df_sorted, sol_plot, dpi=150, label_shift_years=shift)
             st.image(png, use_container_width=True)
-            phase_png = render_phase3d_png(program_name, df_sorted, sol_plot, dpi=150)
-            st.image(phase_png, use_container_width=True, caption="3D phase plots")
 
+            # Graph 3D (2 panels)
+            png3d = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
+            st.image(png3d, use_container_width=True)
+
+            # Saving the pngs
             if save_pngs:
-                outdir = Path("./paig_results")
-                outdir.mkdir(parents=True, exist_ok=True)
-                # save exactly what is shown
+                outdir = Path(".") / "paig_results"
                 paig.save_series_grid_plot(outdir, program_name, t_plot_years, df_sorted, sol_plot)
-                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol_plot)
-                st.success(f"Saved on server: {outdir.resolve()}")
+                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
+                st.success(f"Saved PNGs in: {outdir.resolve()}")
 
         except Exception as e:
             st.error(f"Fit failed: {e}")

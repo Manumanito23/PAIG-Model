@@ -343,9 +343,10 @@ def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5):
 # ------------------------------
 def fit_program(df: pd.DataFrame,
                 program_name: str,
-                y0_mode: str = "estimated",   # "estimated" or "zeros"
+                y0_mode: str = "estimated",   # "estimated" | "zeros" | "data"
                 init_guess: Optional[Dict[str, float]] = None,
-                max_nfev: int = 500
+                max_nfev: int = 500,
+                loss: str = "soft_l1",         # "soft_l1" or "linear"
                 ) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
     """
     Fit PAIG parameters to one dataset.
@@ -354,6 +355,11 @@ def fit_program(df: pd.DataFrame,
       - "estimated": fit y0 = [P0, A0, I0, G0] as 4 extra parameters
       - "zeros":     start at t = -1 with y0=(0,0,0,0), integrate one year,
                      then compare only from t=0 to the data (replaces old zeros mode)
+      - "data":      sets y0 to the first observed point of the data table without adjustments
+
+    loss:
+      - "soft_l1": robust loss
+      - "linear":  pure LS
     """
     df = df.sort_values("year").reset_index(drop=True)
     t_years = df["year"].values
@@ -383,27 +389,34 @@ def fit_program(df: pd.DataFrame,
 
     # ---- build optimization problem
     if y0_mode == "zeros":
-        # New zeros = “previous year with zero stocks”
+        # “previous year with zero stocks”
         x0 = np.array([rho0, alpha0, delta0, nu0, gamma0], float)
         lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6])
         ub = np.array([1e6,  5.0,  5.0,  5.0,  1.0])
         fun = lambda x: residuals_zeros_tminus1(x, t, data_mat)
         p_count = 5
-    else:  # "estimated"
+
+    elif y0_mode == "data":
+        # y0 fixed: same as first row of the data
+        y0_fixed = y0_data.copy()
+        x0 = np.array([rho0, alpha0, delta0, nu0, gamma0], float)
+        lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6])
+        ub = np.array([1e6,  5.0,  5.0,  5.0,  1.0])
+        fun = lambda x: residuals_unconstrained(x, t, y0_fixed, data_mat)
+        p_count = 5
+
+    else:  # "estimated"  (y0 free, adjusted with the first 5 params)
         x0 = np.array([rho0, alpha0, delta0, nu0, gamma0,
                        y0_data[0], y0_data[1], y0_data[2], y0_data[3]], float)
-        lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6,
-                       0.0, 0.0, 0.0, 0.0])
-        ub = np.array([1e6,  5.0,  5.0,  5.0,  1.0,
-                       1e7, 1e7, 1e7, 1e7])
+        lb = np.array([1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 0.0, 0.0, 0.0, 0.0])
+        ub = np.array([1e6,  5.0,  5.0,  5.0,  1.0,  1e9,  1e9,  1e9,  1e9])
         fun = lambda x: residuals_unconstrained_y0free(x, t, data_mat)
         p_count = 9
 
-    # Unweighted nonlinear least squares (pure L2)
     res = least_squares(fun, x0,
                         bounds=(lb, ub),
                         max_nfev=max_nfev,
-                        loss='linear',
+                        loss=loss,               # <<--- usa la pérdida elegida
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
     # ---- extract results & build solution aligned with data
@@ -460,7 +473,7 @@ def fit_program(df: pd.DataFrame,
         "lambda1": lam1, "lambda2": lam2,
         "y0_mode": y0_mode,
         "y0_P": y0_used[0], "y0_A": y0_used[1], "y0_I": y0_used[2], "y0_G": y0_used[3],
-        "success": res.success, "cost": res.cost, "nfev": res.nfev
+        "success": res.success, "cost": res.cost, "nfev": res.nfev, "loss": loss
     }
     summary.update(metrics)
 
