@@ -32,7 +32,7 @@ The ODE system (PAIG):
   dI/dt = nu P
   dG/dt = gamma A
 
-Author: Manuel Guillén
+Author: Manuel Guillén and chatGPT :p
 """
 
 import argparse
@@ -304,6 +304,58 @@ def series_metrics(y_true, y_pred):
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
     return rmse, r2
 
+def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5, use_weights: bool = True):
+    """
+    Compute overall goodness-of-fit metrics across all 4 series together:
+      - Global weighted R^2
+      - Weighted reduced chi-square
+      - Global weighted RMSE (per point)
+
+    Parameters
+    ----------
+    df : DataFrame with columns ['P','A','I','G'] (already sorted)
+    sol : OdeSolution from integrate_model (sol.y shape = (4, T))
+    p : number of fitted parameters (5 here: rho, alpha, delta, nu, gamma) or (rho, delta, nu, gamma, r)
+    use_weights : if True, use the same series weights (1 / max(series)) as in fitting
+
+    Returns
+    -------
+    R2_global_w : float
+    chi2_reduced_w : float
+    rmse_global_w : float
+    """
+    # Data and prediction matrices in order [P, A, I, G]
+    data_mat = df[["P", "A", "I", "G"]].T.values.astype(float)  # (4, T)
+    pred_mat = sol.y.astype(float)                               # (4, T)
+    res = pred_mat - data_mat                                    # (4, T)
+
+    if use_weights:
+        w = _series_weights(df)                  # (4,)
+        res_w = res * w[:, None]                 # broadcast row-wise
+        data_w = data_mat * w[:, None]
+    else:
+        res_w = res
+        data_w = data_mat
+
+    # Sum of squares of weighted residuals (all series, all times)
+    SS_res_w = float(np.sum(res_w**2))
+
+    # Total sum of squares (weighted), series-centered
+    mean_w = np.mean(data_w, axis=1, keepdims=True)
+    SS_tot_w = float(np.sum((data_w - mean_w)**2))
+
+    # Global weighted R^2
+    R2_global_w = 1.0 - SS_res_w / SS_tot_w if SS_tot_w > 0 else np.nan
+
+    # Reduced chi-square (weighted)
+    n = data_mat.size                 # total number of data points = 4*T
+    dof = max(n - p, 1)               # guard against divide-by-zero
+    chi2_reduced_w = SS_res_w / dof
+
+    # Global weighted RMSE per point (dimensionless under the chosen scaling)
+    rmse_global_w = np.sqrt(SS_res_w / n)
+
+    return R2_global_w, chi2_reduced_w, rmse_global_w
 
 # ------------------------------
 # Fitting routine for one program
@@ -311,7 +363,8 @@ def series_metrics(y_true, y_pred):
 def fit_program(df: pd.DataFrame,
                 program_name: str,
                 ratio_max: Optional[float] = None,
-                max_nfev: int = 500) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
+                max_nfev: int = 500,
+                init_guess: Optional[Dict[str, float]] = None) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
     """
     Fit the PAIG model parameters to a single program's dataset.
 
@@ -370,6 +423,13 @@ def fit_program(df: pd.DataFrame,
     delta0 = 0.6
     nu0    = 0.8
     gamma0 = 0.02
+    # Allow external initial guesses from UI sliders
+    if init_guess is not None:
+        rho0   = float(init_guess.get("rho",    rho0))
+        alpha0 = float(init_guess.get("alpha",  alpha0))
+        delta0 = float(init_guess.get("delta",  delta0))
+        nu0    = float(init_guess.get("nu",     nu0))
+        gamma0 = float(init_guess.get("gamma",  gamma0))
 
     # 5) Choose parameterization and bounds.
     #    Bounds keep the search in a physically meaningful, numerically stable region.
@@ -415,13 +475,20 @@ def fit_program(df: pd.DataFrame,
     # 9) Re-integrate with fitted parameters on the same t-grid to get clean predictions.
     sol = integrate_model(t, y0, pars_hat)  # sol.y has shape (4, T) in order [P, A, I, G]
 
-    # 10) Compute per-series metrics (RMSE, R^2) for diagnostics.
+    # 10) Per-series metrics
     metrics = {}
     comps = ["P", "A", "I", "G"]
     for idx, comp in enumerate(comps):
         rmse, r2 = series_metrics(df[comp].values, sol.y[idx])
         metrics[f"RMSE_{comp}"] = rmse
         metrics[f"R2_{comp}"]   = r2
+
+    # 10b) Global (all-series) goodness-of-fit metrics
+    # p = 5 free parameters in both modes (unconstrained: rho,alpha,delta,nu,gamma; ratio: rho,delta,nu,gamma,r)
+    R2_global_w, chi2_red_w, rmse_global_w = global_gof_metrics(df, sol, p=5, use_weights=True)
+    metrics["R2_global_weighted"]        = R2_global_w
+    metrics["chi2_reduced_weighted"]     = chi2_red_w
+    metrics["RMSE_global_weighted"]      = rmse_global_w
 
     # Assemble a compact summary row for aggregation across programs.
     summary = {
@@ -480,8 +547,11 @@ def save_series_plots(outdir: Path, name: str, t_years: np.ndarray, df: pd.DataF
 
     for comp, idx, title in comps:
         plt.figure()
-        plt.plot(t_years, sol.y[idx], label="Model")
+        plt.plot(t_years, sol.y[idx], 'r-', label="Model")
         plt.scatter(df["year"].values, df[comp].values, label="Data")
+
+        y_max = max(df[comp].max(), sol.y[idx].max())
+        plt.ylim(0, y_max)
         plt.title(f"{name} — {title}")
         plt.xlabel("Year")
         plt.ylabel("Students")
@@ -535,13 +605,15 @@ def save_series_grid_plot(outdir: Path, name: str, t_years: np.ndarray, df: pd.D
     for i, (comp, idx, title) in enumerate(comps):
         ax = axes[i // 2, i % 2]
 
-        # Model: continuous line (no explicit color -> matplotlib default)
+        # Model: continuous line
         ax.plot(t_years, sol.y[idx], 'r-', label="Model")
 
         # Data: discrete yearly points; using scatter emphasizes discrete observations
         ax.scatter(df["year"].values, df[comp].values, label="Data")
 
         # Titles and axis labels
+        y_max = max(df[comp].max(), sol.y[idx].max())
+        ax.set_ylim(0, y_max)
         ax.set_title(title)
         ax.set_xlabel("Year")
         ax.set_ylabel("Students")
@@ -670,7 +742,7 @@ def main():
 
         # Plots
         if args.save_plots:
-            save_series_grid_plot(outdir, name, t_years, df_sorted, sol)
+            save_series_plots(outdir, name, t_years, df_sorted, sol)
             save_series_3d_phase_plots(outdir, name, df_sorted, sol)
         if not args.no_show and not args.save_plots:
             # If not saving, show interactively (one figure per series)
@@ -695,9 +767,11 @@ def main():
 
     # Round some columns for a tidy CSV
     for col in ["rho","alpha","delta","nu","gamma","alpha/delta","P*","A*",
-                "RMSE_P","RMSE_A","RMSE_I","RMSE_G","R2_P","R2_A","R2_I","R2_G"]:
+                "RMSE_P","RMSE_A","RMSE_I","RMSE_G","R2_P","R2_A","R2_I","R2_G",
+                "R2_global_weighted","chi2_reduced_weighted","RMSE_global_weighted"]:
         if col in summary_df.columns:
             summary_df[col] = summary_df[col].astype(float)
+
 
     summary_csv = outdir / "paig_fitted_parameters_summary.csv"
     summary_df.to_csv(summary_csv, index=False)
