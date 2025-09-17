@@ -299,7 +299,7 @@ with col_right:
                 sol_plot = sol
             png = render_fit_png(
                 program_name,
-                t_plot_years if not label_shift_on else (t_plot_years),
+                t_plot_years,
                 df_sorted,
                 sol_plot,
                 dpi=150,
