@@ -286,20 +286,20 @@ with col_right:
             if summary["y0_mode"] == "zeros":
                 # use the re-scaled solution that fit_program returned (sol)
                 # and add explicitly the point of the previous year as zeros
-                t_plot_years = np.r_[t_years[0] - 1, t_years]
+                #t_plot_years = np.r_[t_years[0] - 1, t_years]
                 class _SolPlot:
                     pass
                 sol_plot = _SolPlot()
                 import numpy as np
                 sol_plot.y = np.hstack([np.zeros((4, 1)), np.asarray(sol.y, float)])
-                sol_plot.t = t_plot_years - t_plot_years[0]
+                #sol_plot.t = t_plot_years - t_plot_years[0]
                 sol_plot.success = True
             else:
                 t_plot_years = t_years
                 sol_plot = sol
             png = render_fit_png(
                 program_name,
-                t_plot_years if not label_shift_on else (t_plot_years + 1),
+                #t_plot_years if not label_shift_on else (t_plot_years + 1),
                 df_sorted,
                 sol_plot,
                 dpi=150,
