@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PAIG model fitter for ANY program CSV (UNWEIGHTED)
+PAIG model fitter for ANY program CSV
 --------------------------------------------------
 - Loads program CSV
 - Fits PAIG parameters by unweighted nonlinear least squares
@@ -39,7 +39,6 @@ def read_csv_auto(path: Path) -> pd.DataFrame:
         except Exception:
             return pd.read_csv(path, sep=",")
 
-
 def find_col(df: pd.DataFrame, substrings: List[str]) -> Optional[str]:
     cols = [c.strip() for c in df.columns]
     lower = [c.lower() for c in cols]
@@ -48,7 +47,6 @@ def find_col(df: pd.DataFrame, substrings: List[str]) -> Optional[str]:
             if s in lc:
                 return cols[i]
     return None
-
 
 def load_program_csv(path: Path) -> pd.DataFrame:
     """
@@ -107,7 +105,6 @@ def paig_rhs(t, y, rho, alpha, delta, nu, gamma):
     dI = nu * P
     dG = gamma * A
     return [dP, dA, dI, dG]
-
 
 def integrate_model(t_eval: np.ndarray, y0: np.ndarray, pars: np.ndarray):
     rho, alpha, delta, nu, gamma = pars
@@ -175,7 +172,7 @@ def residuals_zeros_tminus1(pars, t_eval_data, data_mat):
     return res.ravel()
 
 # ------------------------------
-# Derived helpers & metrics (UNWEIGHTED)
+# Derived helpers & metrics
 # ------------------------------
 def eigenvalues(alpha, delta, nu, gamma):
     a = (alpha + nu) + (delta + gamma)
@@ -339,7 +336,7 @@ def global_gof_metrics(df: pd.DataFrame, sol, p: int = 5):
 
 
 # ------------------------------
-# Fitting routine for one program (UNWEIGHTED), with y0 mode
+# Fitting routine for one program, with y0 mode
 # ------------------------------
 def fit_program(df: pd.DataFrame,
                 program_name: str,
@@ -347,6 +344,7 @@ def fit_program(df: pd.DataFrame,
                 init_guess: Optional[Dict[str, float]] = None,
                 max_nfev: int = 500,
                 loss: str = "soft_l1",         # "soft_l1" or "linear"
+                normalize: bool = False,
                 ) -> Tuple[Dict, np.ndarray, pd.DataFrame, object]:
     """
     Fit PAIG parameters to one dataset.
@@ -368,11 +366,18 @@ def fit_program(df: pd.DataFrame,
 
     # 2) Stack the observed series into a 4 x T matrix in the order [P; A; I; G].
     #    Transpose so rows are series and columns are time points.
-    data_mat = df[["P", "A", "I", "G"]].T.values
+    data_raw = df[["P","A","I","G"]].T.values.astype(float)
+    # Optional normalization of the data
+    if normalize:
+        scales = data_raw.max(axis=1).astype(float)
+        scales[scales <= 0] = 1.0      # avoid /0
+    else:
+        scales = np.ones(4, dtype=float)
 
     # 3) Initial condition y(0) comes from the first observation.
     #    y0 = [P0, A0, I0, G0]^T
-    y0_data  = data_mat[:, 0].copy()  # only a starting guess when y0 is free
+    data_mat = data_raw / scales[:, None]
+    y0_data  = data_mat[:, 0]  # only a starting guess when y0 is free
 
     # 4) Initial guesses (heuristics). Better guesses -> faster/robuster convergence.
     if "enrolled_in_year" in df.columns:
@@ -430,30 +435,37 @@ def fit_program(df: pd.DataFrame,
                         loss=loss,               # linear or soft_l1
                         ftol=1e-10, xtol=1e-10, gtol=1e-10)
 
-    # ---- extract results & build solution aligned with data
+    # ---- extract results & build solution aligned with data BACK TO ORIGINAL UNITS
     if y0_mode == "estimated":
         rho, alpha, delta, nu, gamma, yP0, yA0, yI0, yG0 = res.x
         pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
-        y0_used = np.array([yP0, yA0, yI0, yG0], float)
-        sol = integrate_model(t, y0_used, pars_hat)
-    elif y0_mode == "zeros":  # zeros = previous year with zeros
+        y0_used_norm = np.array([yP0, yA0, yI0, yG0], float)  # Scale of the adjustment
+        sol = integrate_model(t, y0_used_norm, pars_hat)
+        sol.y = sol.y * scales[:, None]                      # back to original
+        y0_used = y0_used_norm * scales
+
+    elif y0_mode == "zeros":
         rho, alpha, delta, nu, gamma = res.x
         pars_hat = np.array([rho, alpha, delta, nu, gamma], float)
         t_aug = np.r_[-1.0, t]
-        y0_z  = np.zeros(4, dtype=float)
-        sol_full = integrate_model(t_aug, y0_z, pars_hat)
-        pred = sol_full.y[:, 1:]  # keep only t >= 0
+        y0_z_norm = np.zeros(4, dtype=float)                 # 0 in used scale
+        sol_full = integrate_model(t_aug, y0_z_norm, pars_hat)
+        pred_norm = sol_full.y[:, 1:]                        # t >= 0 in normalized scale
+        pred_orig = pred_norm * scales[:, None]
         class _Sol: pass
         sol = _Sol()
-        sol.y = pred
+        sol.y = pred_orig
         sol.t = t
         sol.success = sol_full.success
-        y0_used = y0_z
-    else:
+        y0_used = y0_z_norm * scales                         # still 0, but in original
+
+    else:  # "data"
         rho, alpha, delta, nu, gamma = res.x
         pars_hat = np.array([rho, alpha, delta, nu, gamma], dtype=float)
-        y0_used  = y0_data.copy()
-        sol = integrate_model(t, y0_used, pars_hat)
+        y0_used_norm = y0_data.copy()
+        sol = integrate_model(t, y0_used_norm, pars_hat)
+        sol.y = sol.y * scales[:, None]                      # back to original
+        y0_used = y0_used_norm * scales
 
     # ---- derived quantities & metrics (unchanged)
     P_star, A_star = steady_state(*pars_hat)

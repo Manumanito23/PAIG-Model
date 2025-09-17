@@ -171,6 +171,12 @@ loss_choice = st.sidebar.radio(
     index=0,
     help="‘soft_l1’ is robust to outliers; ‘linear’ is standard least squares."
 )
+norm_choice = st.sidebar.radio(
+    "Normalize scales during fit",
+    options=["Fit original", "Fit normalized"],
+    index=0,
+    help="Scale each series by its max during fitting; back-transform for plots/metrics."
+)
 
 
 # ----------------- main -----------------
@@ -237,6 +243,7 @@ with col_right:
                 init_guess=dict(rho=rho0, alpha=alpha0, delta=delta0, nu=nu0, gamma=gamma0),
                 y0_mode=y0_mode,
                 loss=loss_choice,
+                normalize=(True if norm_choice == "Fit normalized" else False)
             )
 
             # To graph: if y0_mode == "zeros", we add the previous year
