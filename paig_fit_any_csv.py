@@ -500,8 +500,10 @@ def fit_program(df: pd.DataFrame,
         "lambda1": lam1, "lambda2": lam2,
         "y0_mode": y0_mode,
         "y0_P": y0_used[0], "y0_A": y0_used[1], "y0_I": y0_used[2], "y0_G": y0_used[3],
-        "success": res.success, "cost": res.cost, "nfev": res.nfev, "loss": loss
+        "success": res.success, "cost": res.cost, "nfev": res.nfev, "loss": loss,
+        "scales": scales.tolist()
     }
+
     summary.update(metrics)
 
     return summary, t_years, df, sol

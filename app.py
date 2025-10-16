@@ -587,10 +587,26 @@ with st.expander("Sensitivity analysis (forecast beyond fitted period)", expande
 
         last_year = int(lf["t_years"][-1])
         t_fore = np.arange(0, years_ahead + 1, dtype=float)
-        y0_fore = np.asarray(lf["sol"].y[:, -1], dtype=float)
+
+        # Detect whether the base fit was normalized
+        scales = np.array(lf["summary"].get("scales", [1.0, 1.0, 1.0, 1.0]), dtype=float)
+        use_normalized = not np.allclose(scales, 1.0)
+
+        # y0 for forecasting
+        y0_orig = np.asarray(lf["sol"].y[:, -1], dtype=float)
+
+        # Helper: integrate either in normalized space (then scale back) or in original space
+        def _forecast_with_params(pars_vec: np.ndarray):
+            if use_normalized:
+                y0_norm = y0_orig / scales
+                sol_f = paig.integrate_model(t_fore, y0_norm, pars_vec)  # params are from normalized fit
+                return sol_f.y * scales[:, None]  # back to original units for plotting
+            else:
+                sol_f = paig.integrate_model(t_fore, y0_orig, pars_vec)
+                return sol_f.y
 
         # Baseline (no change)
-        sol_base = paig.integrate_model(t_fore, y0_fore, pars_fit)
+        Y_base = _forecast_with_params(pars_fit)
         years_fore = np.arange(last_year, last_year + years_ahead + 1)
 
         comps = [("P",0,"Passive (P)"), ("A",1,"Active (A)"),
@@ -599,26 +615,23 @@ with st.expander("Sensitivity analysis (forecast beyond fitted period)", expande
 
         for i,(comp,idx,title) in enumerate(comps):
             ax = axes[i//2, i%2]
-            ax.plot(years_fore, sol_base.y[idx], '-', linewidth=2, color='k', label="no change (fitted)")
-            ax.set_title(title)
-            ax.set_xlabel("Year")
-            ax.set_ylabel("Students")
+            ax.plot(years_fore, Y_base[idx], '-', linewidth=2, color='k', label="no change (fitted)")
+            ax.set_title(title); ax.set_xlabel("Year"); ax.set_ylabel("Students")
             ax.grid(True, alpha=0.3)
 
         # Scenarios (each line modifies parameters by percent relative to the fit)
         for s in st.session_state["sens_scenarios"]:
             pct = np.asarray(s["pct"], dtype=float)
             pars_mod = pars_fit * (1.0 + pct / 100.0)
-            sol_mod  = paig.integrate_model(t_fore, y0_fore, pars_mod)
-            for i,(comp,idx,_) in enumerate(comps):
-                axes[i//2, i%2].plot(years_fore, sol_mod.y[idx], '--', linewidth=1.8, label=s["label"])
+            Y_mod = _forecast_with_params(pars_mod)
+            for i,(_,idx,_) in enumerate(comps):
+                axes[i//2, i%2].plot(years_fore, Y_mod[idx], '--', linewidth=1.8, label=s["label"])
 
         for ax in axes.ravel():
             ax.legend(loc="best", framealpha=0.9)
-            y_min, y_max = ax.get_ylim()
-            pad = 0.06  # 6% upper margin to avoid the graph being too close to the top
-            ax.set_ylim(0.0, max(y_max * (1.0 + pad), 1.0))
-
+            ymin, ymax = ax.get_ylim()
+            pad = 0.06
+            ax.set_ylim(0.0, max(ymax * (1.0 + pad), 1.0))
 
         fig.suptitle(f"Sensitivity analysis — {lf['program']} (start at {last_year}, +{years_ahead}y)", fontsize=14)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
