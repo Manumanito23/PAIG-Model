@@ -631,7 +631,7 @@ with st.expander("Sensitivity analysis (forecast beyond fitted period)", expande
             ax.legend(loc="best", framealpha=0.9)
             ymin, ymax = ax.get_ylim()
             pad = 0.06
-            ax.set_ylim(0.0, max(ymax * (1.0 + pad), 1.0))
+            ax.set_ylim(min(ymin * (1.0 - pad), 1.0), max(ymax * (1.0 + pad), 1.0))
 
         fig.suptitle(f"Sensitivity analysis — {lf['program']} (start at {last_year}, +{years_ahead}y)", fontsize=14)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
