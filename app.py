@@ -10,11 +10,288 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+import zipfile
 import streamlit as st
 
 import paig_fit_any_csv as paig
 
 st.set_page_config(page_title="PAIG Model Explorer", layout="wide")
+
+if "step_m" not in st.session_state:
+    st.session_state.step_m = 1 # 1 = each month (no sampling)
+
+def _tables_for_repro(lf: dict,
+                      yr_lo: int,
+                      yr_hi: int,
+                      monthly_mode: bool,
+                      step_m: int,
+                      norm_choice: str,
+                      loss_choice: str,
+                      scenarios: list | None,
+                      years_ahead: int | None) -> dict:
+    """
+    Build all tables needed to reproduce the experiment.
+    Returns a dict of DataFrames (and small arrays) ready to export.
+    """
+    summary = lf["summary"]
+    df_used = lf["df"].copy()              # exact data slice used for the fit
+    years   = np.asarray(lf["t_years"], float)
+    sol     = lf["sol"]
+
+    # ---- core tables ----
+    data_used = df_used[["year","P","A","I","G"]].reset_index(drop=True)
+
+    model_fit = pd.DataFrame({
+        "year": years,
+        "P_model": np.asarray(sol.y[0], float),
+        "A_model": np.asarray(sol.y[1], float),
+        "I_model": np.asarray(sol.y[2], float),
+        "G_model": np.asarray(sol.y[3], float),
+    })
+
+    # residuals (Data - Model) aligned by year
+    resid = data_used.merge(model_fit, on="year", how="left")
+    for c, m in zip(["P","A","I","G"], ["P_model","A_model","I_model","G_model"]):
+        resid[f"{c}_resid"] = resid[c] - resid[m]
+
+    # fitted params + y0 + metadata
+    params = pd.DataFrame([{
+        "rho": summary["rho"], "alpha": summary["alpha"], "delta": summary["delta"],
+        "nu": summary["nu"],   "gamma": summary["gamma"],
+        "alpha_over_delta": summary["alpha/delta"],
+        "y0_mode": summary["y0_mode"],
+        "y0_P": summary["y0_P"], "y0_A": summary["y0_A"], "y0_I": summary["y0_I"], "y0_G": summary["y0_G"],
+        "normalized_during_fit": (norm_choice == "Fit normalized"),
+        "loss": loss_choice,
+        "success": summary["success"], "cost": summary["cost"], "nfev": summary["nfev"],
+    }])
+
+    # scales (if normalized)
+    scales = np.array(summary.get("scales", [1.0,1.0,1.0,1.0]), dtype=float)
+    scales_df = pd.DataFrame(
+        [{"scale_P": float(scales[0]), "scale_A": float(scales[1]),
+          "scale_I": float(scales[2]), "scale_G": float(scales[3])}]
+    )
+
+    # meta sheet
+    meta = pd.DataFrame([{
+        "program": summary["program"],
+        "year_range_lo": int(yr_lo), "year_range_hi": int(yr_hi),
+        "monthly_mode": bool(monthly_mode),
+        "sampling_step_months": int(step_m if monthly_mode else 0),
+        "rows_used": len(data_used),
+    }])
+
+    out = {
+        "meta": meta,
+        "params": params,
+        "scales": scales_df,
+        "data_used": data_used,
+        "model_fit": model_fit,
+        "residuals": resid,
+    }
+
+    # ---- optional: forecast/sensitivity tables (same logic as your figure) ----
+    if scenarios is not None and years_ahead is not None:
+        pars_fit = np.array([
+            summary["rho"], summary["alpha"], summary["delta"], summary["nu"], summary["gamma"]
+        ], dtype=float)
+
+        last_year = int(years[-1])
+        t_fore    = np.arange(0, years_ahead + 1, dtype=float)
+        years_fore = np.arange(last_year, last_year + years_ahead + 1)
+
+        # detect normalized fit
+        use_norm = not np.allclose(scales, 1.0)
+        y0_last  = np.asarray(sol.y[:, -1], dtype=float)
+
+        def _forecast(pars_vec):
+            if use_norm:
+                y0_norm = y0_last / scales
+                s = paig.integrate_model(t_fore, y0_norm, pars_vec)
+                return s.y * scales[:, None]
+            else:
+                s = paig.integrate_model(t_fore, y0_last, pars_vec)
+                return s.y
+
+        base = _forecast(pars_fit)
+        fore_base = pd.DataFrame({
+            "year": years_fore,
+            "P": base[0], "A": base[1], "I": base[2], "G": base[3],
+        })
+
+        # pack scenarios in "long" tidy form (label, year, series, value)
+        rows = []
+        for s in scenarios:
+            pct = np.asarray(s["pct"], dtype=float)
+            pars_mod = pars_fit * (1.0 + pct / 100.0)
+            Ym = _forecast(pars_mod)
+            for j, lab in enumerate(["P","A","I","G"]):
+                for k, y in enumerate(years_fore):
+                    rows.append({
+                        "label": s["label"], "year": int(y), "series": lab, "value": float(Ym[j, k]),
+                        "rho": pars_mod[0], "alpha": pars_mod[1], "delta": pars_mod[2],
+                        "nu": pars_mod[3], "gamma": pars_mod[4],
+                        "pct_rho": pct[0], "pct_alpha": pct[1], "pct_delta": pct[2],
+                        "pct_nu": pct[3], "pct_gamma": pct[4],
+                    })
+        fore_scenarios = pd.DataFrame(rows) if rows else pd.DataFrame(
+            columns=["label","year","series","value","rho","alpha","delta","nu","gamma",
+                     "pct_rho","pct_alpha","pct_delta","pct_nu","pct_gamma"])
+
+        out["forecast_baseline"]  = fore_base
+        out["forecast_scenarios"] = fore_scenarios
+
+    return out
+
+
+def _excel_bundle_bytes(tables: dict) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+        for name, df in tables.items():
+            # Limit sheet name length and avoid empty-writer errors
+            sheet = name[:31] if name else "sheet"
+            (df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)).to_excel(w, sheet_name=sheet, index=False)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _zip_csv_bundle_bytes(tables: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        # README
+        readme = (
+            "PAIG reproducibility bundle\n"
+            "---------------------------\n"
+            "Tables are CSVs with UTF-8 encoding.\n"
+            "ODEs:\n"
+            "  dP = -(alpha + nu) P + delta A + rho\n"
+            "  dA = alpha P - (delta + gamma) A\n"
+            "  dI = nu P\n"
+            "  dG = gamma A\n"
+            "Parameter order: [rho, alpha, delta, nu, gamma]\n"
+            "Time variable is years (t = year - year0).\n"
+        )
+        z.writestr("README.txt", readme)
+
+        for name, df in tables.items():
+            csv_bytes = (df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)).to_csv(index=False).encode("utf-8")
+            z.writestr(f"{name}.csv", csv_bytes)
+    buf.seek(0)
+    return buf.getvalue()
+
+def _zip_graphs_bundle_bytes(lf: dict,
+                             sens_scenarios: list | None = None,
+                             years_ahead: int = 20,
+                             label_shift_years: int = 0) -> bytes:
+    """
+    Generate a ZIP containing high-resolution PNGs of:
+      - Individual fits for P, A, I, G
+      - Two 3D phase plots
+      - Sensitivity analysis (P, A, I, G)
+    """
+    name = lf["program"]
+    df = lf["df"]
+    sol = lf["sol"]
+    t_years = lf["t_years"]
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+
+        # --- individual fits ---
+        comps = [("P", 0, "Passive (P)"),
+                 ("A", 1, "Active (A)"),
+                 ("I", 2, "Inactive (I, cumulative)"),
+                 ("G", 3, "Graduated (G, cumulative)")]
+        for comp, idx, title in comps:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(t_years, sol.y[idx], 'r-', lw=2, label="Model")
+            ax.scatter(df["year"], df[comp], s=25, label="Data")
+            ax.set_title(title)
+            ax.set_xlabel("Year"); ax.set_ylabel("Students")
+            ax.grid(True); ax.legend()
+            fig.tight_layout()
+            b = io.BytesIO()
+            fig.savefig(b, format="png", dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            z.writestr(f"fit_{comp}.png", b.getvalue())
+
+        # --- 3D phases ---
+        Pm, Am, Im, Gm = sol.y
+        Pd, Ad, Id, Gd = df["P"], df["A"], df["I"], df["G"]
+
+        # A–P–I
+        fig = plt.figure(figsize=(6, 5))
+        ax = fig.add_subplot(111, projection="3d")
+        ax.plot(Am, Pm, Im, 'r-', label="Model")
+        ax.scatter(Ad, Pd, Id, s=18, label="Data")
+        ax.set_xlabel("A"); ax.set_ylabel("P"); ax.set_zlabel("I (cum)")
+        ax.set_title("3D phase: A–P–I"); ax.legend(); ax.grid(True)
+        b = io.BytesIO(); fig.savefig(b, format="png", dpi=300, bbox_inches="tight"); plt.close(fig)
+        z.writestr("phase_API.png", b.getvalue())
+
+        # A–P–G
+        fig = plt.figure(figsize=(6, 5))
+        ax = fig.add_subplot(111, projection="3d")
+        ax.plot(Am, Pm, Gm, 'r-', label="Model")
+        ax.scatter(Ad, Pd, Gd, s=18, label="Data")
+        ax.set_xlabel("A"); ax.set_ylabel("P"); ax.set_zlabel("G (cum)")
+        ax.set_title("3D phase: A–P–G"); ax.legend(); ax.grid(True)
+        b = io.BytesIO(); fig.savefig(b, format="png", dpi=300, bbox_inches="tight"); plt.close(fig)
+        z.writestr("phase_APG.png", b.getvalue())
+
+        # --- Sensitivity (if any) ---
+        if sens_scenarios:
+            pars_fit = np.array([
+                lf["summary"]["rho"], lf["summary"]["alpha"], lf["summary"]["delta"],
+                lf["summary"]["nu"],  lf["summary"]["gamma"]
+            ], dtype=float)
+
+            last_year = int(lf["t_years"][-1])
+            t_fore    = np.arange(0, years_ahead + 1, dtype=float)
+            years_fore = np.arange(last_year, last_year + years_ahead + 1, dtype=int)
+
+            # detect normalized fit and grab last state
+            scales = np.array(lf["summary"].get("scales", [1.0,1.0,1.0,1.0]), dtype=float)
+            use_norm = not np.allclose(scales, 1.0)
+            y0_last_orig = np.asarray(lf["sol"].y[:, -1], dtype=float)
+
+            def _forecast(pars_vec: np.ndarray) -> np.ndarray:
+                if use_norm:
+                    y0_norm = y0_last_orig / scales
+                    s = paig.integrate_model(t_fore, y0_norm, pars_vec)
+                    return s.y * scales[:, None]     # back to original units for plotting/saving
+                else:
+                    s = paig.integrate_model(t_fore, y0_last_orig, pars_vec)
+                    return s.y
+
+            base = _forecast(pars_fit)
+
+            comps = [("P", 0, "Passive (P)"),
+                     ("A", 1, "Active (A)"),
+                     ("I", 2, "Inactive (I, cumulative)"),
+                     ("G", 3, "Graduated (G, cumulative)")]
+
+            for comp, idx, title in comps:
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.plot(years_fore, base[idx], '-', color='k', lw=2, label="no change (fitted)")
+                for s in sens_scenarios:
+                    pct = np.asarray(s["pct"], float)
+                    pars_mod = pars_fit * (1.0 + pct / 100.0)
+                    Y_mod = _forecast(pars_mod)
+                    ax.plot(years_fore, Y_mod[idx], '--', lw=1.8, label=s["label"])
+                ax.set_title(title)
+                ax.set_xlabel("Year"); ax.set_ylabel("Students")
+                ax.grid(True); ax.legend()
+                fig.tight_layout()
+                b = io.BytesIO(); fig.savefig(b, format="png", dpi=300, bbox_inches="tight"); plt.close(fig)
+                z.writestr(f"sensitivity_{comp}.png", b.getvalue())
+
+        # Add a small manifest
+        z.writestr("README.txt", "Individual high-resolution graphs for fit, 3D phases, and sensitivity.\n")
+
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ----------------- helpers -----------------
@@ -25,6 +302,26 @@ def slice_df_by_year(df: pd.DataFrame, y0: int, y1: int) -> pd.DataFrame:
         raise ValueError(f"Selected range {y0}-{y1} has too few rows ({len(s)}). Please pick ≥ 3.")
     return s
 
+# -------- frequency helpers --------
+def is_monthly(df: pd.DataFrame) -> bool:
+    years = np.asarray(df.get("year", []), float)
+    if years.size < 3:
+        return False
+    diffs = np.diff(np.unique(np.round(years, 6)))
+    if diffs.size == 0:
+        return False
+    # monthly if median step < ~0.75 years
+    return np.nanmedian(diffs) < 0.75
+
+def downsample_months(df: pd.DataFrame, step_months: int) -> pd.DataFrame:
+    """Keep every k-th row starting from the first, assuming consecutive months.
+    Does NOT aggregate; preserves monotone cumulative I and G.
+    """
+    if step_months <= 1:
+        return df
+    s = df.sort_values("year").reset_index(drop=True)
+    keep = np.arange(0, len(s), step_months)
+    return s.iloc[keep].reset_index(drop=True)
 
 def render_fit_png(
     name: str,
@@ -320,7 +617,6 @@ def _render_fit_from_cache(cache: dict, label_shift_on: bool):
 st.sidebar.title("PAIG Controls")
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-save_pngs      = st.sidebar.checkbox("Save PNGs to ./paig_results", value=False)
 label_shift_on = st.sidebar.checkbox("Shift year labels by 1 (display only)", value=False)
 
 st.sidebar.markdown("---")
@@ -360,22 +656,50 @@ except Exception as e:
     st.error(f"Failed to parse CSV: {e}")
     st.stop()
 
-y_min, y_max = int(df_full["year"].min()), int(df_full["year"].max())
+monthly_mode = is_monthly(df_full)
+df_effective = (
+    downsample_months(df_full, int(st.session_state.step_m))
+    if monthly_mode else
+    df_full
+)
+
+year_min = int(np.floor(df_effective["year"].min()))
+year_max = int(np.ceil(df_effective["year"].max()))
 
 # Two columns so the Preview table is not full width
 col_left, col_right = st.columns([1, 2], gap="large")
 
 with col_left:
     st.subheader("Preview")
-    st.dataframe(df_full, height=340, use_container_width=False)  # keep narrow table
-    yr0, yr1 = st.slider("Year range", min_value=y_min, max_value=y_max,
-                         value=(y_min, y_max), step=1, label_visibility="visible")
+    st.dataframe(df_effective, height=340, use_container_width=False)  # st.dataframe(df_view, height=340, use_container_width=False)     # shows sampled + year-range slice
+    yr_lo, yr_hi = st.slider(
+        "Year range",
+        min_value=year_min,
+        max_value=year_max,
+        value=(year_min, year_max),
+        step=1,
+        help="Select the fitting window in years."
+    )
+    mask = (df_effective["year"] >= yr_lo) & (df_effective["year"] <= yr_hi)
+    df_view = df_effective.loc[mask].copy()
+
+    # Sampling step (months), visible only if CSV is monthly
+    if monthly_mode:
+        st.slider(
+            "Sampling step (months)",
+            min_value=1, max_value=12, step=1,
+            value=int(st.session_state.step_m),
+            key="step_m",
+            help="Keep every k-th month from the uploaded table (1 = every month, 12 ≈ annual)."
+        )
+        st.caption(f"Detected monthly data. Using every {int(st.session_state.step_m)} month(s). "
+                f"Rows after sampling: {len(df_effective)}")
 
 with col_right:
     st.markdown("#### Initial condition at start of fit (y₀)")
 
     # 3 options: estimated / zeros / data
-    default_mode = "zeros" if yr0 == y_min else "estimated"
+    default_mode = "zeros" if year_min == yr_lo else "estimated"
     labels = {
         "estimated": "estimated (fit y₀)",
         "zeros":     "zeros (P=A=I=G=0 at previous year)",
@@ -395,8 +719,11 @@ with col_right:
     st.session_state.y0_mode = y0_mode
 
     # Build the current signature BEFORE the Run button; keep it in sync on every rerun
-    current_sig = _current_fit_signature(program_name, yr0, yr1,
-                                         st.session_state.y0_mode, loss_choice, norm_choice)
+    current_sig = _current_fit_signature(
+        program_name, yr_lo, yr_hi, st.session_state.y0_mode, loss_choice, norm_choice
+    )
+    current_sig["step_m"] = int(st.session_state.step_m) if monthly_mode else 1
+    current_sig["monthly_mode"] = bool(monthly_mode)
 
     # If any base-fit control changed, invalidate cache and (optionally) clear sensitivity scenarios
     if "fit_signature" in st.session_state:
@@ -410,7 +737,7 @@ with col_right:
 
     if run:
         try:
-            df_slice = slice_df_by_year(df_full, yr0, yr1)
+            df_slice = df_view.copy() # It can also be slice_df_by_year(df_effective, yr_lo, yr_hi)
 
             # Fit (unweighted); p depends on y0_mode (5 or 9)
             summary, t_years, df_sorted, sol = paig.fit_program(
@@ -490,20 +817,13 @@ with col_right:
             }
             st.session_state["fit_signature"] = current_sig
 
-            # Optional: save PNGs exactly as before
-            if save_pngs:
-                outdir = Path(".") / "paig_results"
-                paig.save_series_grid_plot(outdir, program_name, t_plot_years, df_sorted, sol_plot)
-                paig.save_series_3d_phase_plots(outdir, program_name, df_sorted, sol)
-                st.success(f"Saved PNGs in: {outdir.resolve()}")
-
         except Exception as e:
             st.error(f"Fit failed: {e}")
 
 
 # ---- If user didn't press Run this time, still render the cached fit if valid ----
 if "last_fit" in st.session_state and _signatures_equal(st.session_state.get("fit_signature", {}), 
-                                                       _current_fit_signature(program_name, yr0, yr1, st.session_state.y0_mode, loss_choice, norm_choice)):
+                                                       _current_fit_signature(program_name, yr_lo, yr_hi, st.session_state.y0_mode, loss_choice, norm_choice)):
     _render_fit_from_cache(st.session_state["last_fit"], label_shift_on)
 
 
@@ -637,3 +957,70 @@ with st.expander("Sensitivity analysis (forecast beyond fitted period)", expande
         fig.tight_layout(rect=[0, 0, 1, 0.96])
         st.pyplot(fig, clear_figure=True)
 # ==================== END Sensitivity Analysis ====================
+
+
+# ==================== Reproducibility / Export ====================
+with st.expander("Reproducibility: download data, parameters, and forecasts", expanded=False):
+    lf = st.session_state.get("last_fit", None)
+    if lf is None:
+        st.info("Run a fit to enable exports.")
+    else:
+        # use current controls for meta
+        monthly_flag = bool(is_monthly(df_full))
+        step_m_cur   = int(st.session_state.step_m) if monthly_flag else 0
+        sens_list    = st.session_state.get("sens_scenarios", [])
+        # re-use current horizon if the Sensitivity expander was used; default 20
+        years_ahead  = 20
+
+        tables = _tables_for_repro(
+            lf=lf,
+            yr_lo=yr_lo, yr_hi=yr_hi,
+            monthly_mode=monthly_flag,
+            step_m=step_m_cur,
+            norm_choice=norm_choice,
+            loss_choice=loss_choice,
+            scenarios=sens_list if sens_list else None,
+            years_ahead=years_ahead if sens_list else None,
+        )
+
+        # Buttons
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            xlsx_bytes = _excel_bundle_bytes(tables)
+            st.download_button(
+                "⬇️ Excel bundle (.xlsx)",
+                data=xlsx_bytes,
+                file_name=f"{lf['program']}_paig_repro.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with c2:
+            zip_bytes = _zip_csv_bundle_bytes(tables)
+            st.download_button(
+                "⬇️ CSV bundle (.zip)",
+                data=zip_bytes,
+                file_name=f"{lf['program']}_paig_repro_csvs.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        with c3:
+            graphs_zip = _zip_graphs_bundle_bytes(
+                lf,
+                sens_scenarios=sens_list if sens_list else None,
+                years_ahead=years_ahead,
+                label_shift_years=(1 if label_shift_on else 0),
+            )
+            st.download_button(
+                "⬇️ Graphs bundle (.zip)",
+                data=graphs_zip,
+                file_name=f"{lf['program']}_paig_graphs.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+
+        st.caption(
+            "Excel sheets: meta, params, scales, data_used, model_fit, residuals"
+            + (", forecast_baseline, forecast_scenarios" if ("forecast_baseline" in tables) else "")
+            + ". CSV bundle contains the same tables plus a README.txt with ODEs and parameter order."
+        )
+# ==================== End of Reproducibility / Export ====================

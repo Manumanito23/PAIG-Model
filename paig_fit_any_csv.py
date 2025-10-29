@@ -52,18 +52,24 @@ def load_program_csv(path: Path) -> pd.DataFrame:
     """
     Standardize to columns:
       year, P, A, I, G, (optional) enrolled_in_year, I_in_year, G_in_year
+
+    Notes
+    -----
+    * Supports annual tables (numeric 'Year') and monthly tables with a date-like
+      'Year/Month' column (e.g., '1/9/1998'). Monthly dates are converted to a
+      fractional year float: year + (month-1)/12.
     """
     df = read_csv_auto(path)
     original_cols = df.columns.tolist()
     df.columns = [c.strip() for c in df.columns]
 
-    year_col = find_col(df, ["year"])
+    year_col = find_col(df, ["year"])  # matches 'Year' or 'Year/Month'
     if year_col is None:
         raise ValueError(f"No 'year' column in {path}. Found: {original_cols}")
 
-    P_col = find_col(df, ["passive"])
-    A_col = find_col(df, ["active"])
-    Icum_col = find_col(df, ["i cumulative", "inactive cumulative", "cum inactive"])
+    P_col = find_col(df, ["passive"])         # e.g., 'C and Passive'
+    A_col = find_col(df, ["active"])          # e.g., 'C and Active'
+    Icum_col = find_col(df, ["i cumulative", "inactive cumulative", "cum inactive"])  # 'I Cumulative'
     Gcum_col = find_col(df, ["g cumulative", "grad cumulative", "graduated cumulative", "cumulative grad"])
 
     if any(x is None for x in [P_col, A_col, Icum_col, Gcum_col]):
@@ -73,12 +79,22 @@ def load_program_csv(path: Path) -> pd.DataFrame:
             f"Need: '...Passive', '...Active', 'I Cumulative', 'G Cumulative'."
         )
 
-    enrolled_col  = find_col(df, ["c in year", "enrolled in year", "cohort in year"])
-    I_in_year_col = find_col(df, ["i in year", "inactive in year"])
-    G_in_year_col = find_col(df, ["g in year", "graduates in year"])
+    enrolled_col  = find_col(df, ["c in year", "enrolled in year", "cohort in year", "c in month"])
+    I_in_year_col = find_col(df, ["i in year", "inactive in year", "i in month"])
+    G_in_year_col = find_col(df, ["g in year", "graduates in year", "g in month"])
+
+    # --- Parse time: numeric (anual) o fecha (mensual -> año fraccional) ---
+    year_series = df[year_col]
+    try:
+        year_vals = year_series.astype(float).values
+    except Exception:
+        dt_vals = pd.to_datetime(year_series, errors="coerce", dayfirst=True)
+        if dt_vals.isna().all():
+            raise ValueError(f"Could not parse year/month values from column '{year_col}' in {path}.")
+        year_vals = (dt_vals.dt.year + (dt_vals.dt.month - 1) / 12.0).astype(float).values
 
     out = pd.DataFrame({
-        "year": df[year_col].astype(float),
+        "year": year_vals,
         "P": df[P_col].astype(float),
         "A": df[A_col].astype(float),
         "I": df[Icum_col].astype(float),
@@ -86,11 +102,11 @@ def load_program_csv(path: Path) -> pd.DataFrame:
     })
 
     if enrolled_col is not None:
-        out["enrolled_in_year"] = df[enrolled_col].astype(float)
+        out["enrolled_in_year"] = pd.to_numeric(df[enrolled_col], errors='coerce').astype(float)
     if I_in_year_col is not None:
-        out["I_in_year"] = df[I_in_year_col].astype(float)
+        out["I_in_year"] = pd.to_numeric(df[I_in_year_col], errors='coerce').astype(float)
     if G_in_year_col is not None:
-        out["G_in_year"] = df[G_in_year_col].astype(float)
+        out["G_in_year"] = pd.to_numeric(df[G_in_year_col], errors='coerce').astype(float)
 
     return out.sort_values("year").dropna().reset_index(drop=True)
 
@@ -503,6 +519,22 @@ def fit_program(df: pd.DataFrame,
         "success": res.success, "cost": res.cost, "nfev": res.nfev, "loss": loss,
         "scales": scales.tolist()
     }
+    sP, sA, sI, sG = map(float, scales)
+    rho_t, alpha_t, delta_t, nu_t, gamma_t = map(float, pars_hat)
+
+    rho_orig   = rho_t   * sP
+    alpha_orig = alpha_t * (sA / sP)
+    delta_orig = delta_t * (sP / sA)
+    nu_orig    = nu_t    * (sP / sI)
+    gamma_orig = gamma_t * (sA / sG)
+
+    summary.update({
+        "rho_orig": rho_orig,
+        "alpha_orig": alpha_orig,
+        "delta_orig": delta_orig,
+        "nu_orig": nu_orig,
+        "gamma_orig": gamma_orig,
+    })
 
     summary.update(metrics)
 
