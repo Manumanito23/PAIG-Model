@@ -73,6 +73,29 @@ def _tables_for_repro(lf: dict,
           "scale_I": float(scales[2]), "scale_G": float(scales[3])}]
     )
 
+    # --- add original-units parameters to params sheet ---
+    # fitted-space params (possibly normalized)
+    rho = float(summary["rho"]);    alpha = float(summary["alpha"])
+    delta = float(summary["delta"]); nu = float(summary["nu"])
+    gamma = float(summary["gamma"])
+
+    sP, sA, sI, sG = map(float, scales)
+
+    # back-transform (original units) – matches your paper and paig.fit_program
+    rho_orig   = rho   * sP
+    alpha_orig = alpha * (sA / sP)
+    delta_orig = delta * (sP / sA)
+    nu_orig    = nu    * (sP / sI)
+    gamma_orig = gamma * (sA / sG)
+
+    # append columns
+    params["params_space"] = "fitted"  # these five are in the space used to fit
+    params["rho_orig"]     = rho_orig
+    params["alpha_orig"]   = alpha_orig
+    params["delta_orig"]   = delta_orig
+    params["nu_orig"]      = nu_orig
+    params["gamma_orig"]   = gamma_orig
+
     # meta sheet
     meta = pd.DataFrame([{
         "program": summary["program"],
@@ -861,13 +884,13 @@ with st.expander("Sensitivity analysis (forecast beyond fitted period)", expande
             st.markdown("**Add a new line (percent deltas w.r.t. fitted params)**")
             c1, c2, c3 = st.columns(3)
             with c1:
-                rho_pct   = st.number_input("Δ rho (%)",   value=0.0, step=1.0, format="%.2f")
-                alpha_pct = st.number_input("Δ alpha (%)", value=0.0, step=1.0, format="%.2f")
+                rho_pct   = st.number_input("enrolment Δ rho (%)",   value=0.0, step=1.0, format="%.2f")
+                alpha_pct = st.number_input("engagement Δ alpha (%)", value=0.0, step=1.0, format="%.2f")
             with c2:
-                delta_pct = st.number_input("Δ delta (%)", value=0.0, step=1.0, format="%.2f")
-                nu_pct    = st.number_input("Δ nu (%)",    value=0.0, step=1.0, format="%.2f")
+                delta_pct = st.number_input("disengagement Δ delta (%)", value=0.0, step=1.0, format="%.2f")
+                nu_pct    = st.number_input("inactivation Δ nu (%)",    value=0.0, step=1.0, format="%.2f")
             with c3:
-                gamma_pct = st.number_input("Δ gamma (%)", value=0.0, step=0.1, format="%.3f")
+                gamma_pct = st.number_input("graduation Δ gamma (%)", value=0.0, step=0.1, format="%.3f")
                 label     = st.text_input("Label", value="custom change", help="Legend text for this line")
 
             add_line = st.form_submit_button("➕ Add line")
