@@ -583,10 +583,25 @@ def _render_fit_from_cache(cache: dict, label_shift_on: bool):
     sol       = cache["sol"]
 
     # Summary
-    st.dataframe(
-        pd.DataFrame([summary])[["program","y0_mode","loss","rho","alpha","delta","nu","gamma","alpha/delta"]],
-        use_container_width=True
-    )
+    # Summary table
+    if summary.get("scales") and not np.allclose(summary["scales"], [1,1,1,1]):
+        st.markdown("#### Parameters (normalized space)")
+        st.dataframe(
+            pd.DataFrame([summary])[["rho","alpha","delta","nu","gamma"]],
+            use_container_width=True
+        )
+
+        st.markdown("#### Parameters (back-transformed to original units)")
+        st.dataframe(
+            pd.DataFrame([summary])[["rho_orig","alpha_orig","delta_orig","nu_orig","gamma_orig"]],
+            use_container_width=True
+        )
+    else:
+        st.markdown("#### Parameters (original fit, real units)")
+        st.dataframe(
+            pd.DataFrame([summary])[["rho","alpha","delta","nu","gamma"]],
+            use_container_width=True
+        )
 
     # Metrics
     p = 9 if summary["y0_mode"] == "estimated" else 5
@@ -785,10 +800,25 @@ with col_right:
                 sol_plot = sol
 
             # Summary table
-            st.dataframe(
-                pd.DataFrame([summary])[["program","y0_mode","loss","rho","alpha","delta","nu","gamma","alpha/delta"]],
-                use_container_width=True
-            )
+            if summary.get("scales") and not np.allclose(summary["scales"], [1,1,1,1]):
+                st.markdown("#### Parameters (normalized space)")
+                st.dataframe(
+                    pd.DataFrame([summary])[["rho","alpha","delta","nu","gamma"]],
+                    use_container_width=True
+                )
+
+                st.markdown("#### Parameters (back-transformed to original units)")
+                st.dataframe(
+                    pd.DataFrame([summary])[["rho_orig","alpha_orig","delta_orig","nu_orig","gamma_orig"]],
+                    use_container_width=True
+                )
+            else:
+                st.markdown("#### Parameters (original fit, real units)")
+                st.dataframe(
+                    pd.DataFrame([summary])[["rho","alpha","delta","nu","gamma"]],
+                    use_container_width=True
+                )
+
 
             # Metrics
             p = 9 if y0_mode == "estimated" else 5

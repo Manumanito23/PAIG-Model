@@ -528,7 +528,7 @@ def fit_program(df: pd.DataFrame,
     nu_orig    = nu_t    * (sP / sI)
     gamma_orig = gamma_t * (sA / sG)
 
-    summary.update({
+    summary.update({#To show the original units
         "rho_orig": rho_orig,
         "alpha_orig": alpha_orig,
         "delta_orig": delta_orig,
