@@ -638,15 +638,6 @@ def _render_fit_from_cache(cache: dict, label_shift_on: bool):
     png3d = render_phase3d_png(summary["program"], df_sorted, sol, dpi=150)
     st.image(png3d, use_container_width=True)
 
-    # Residuals
-    with st.expander("Residual analysis (time series)", expanded=False):
-        show_residual_plots(t_years, df_sorted, sol)
-        st.caption(
-            "Residuals are defined as Data − Model. "
-            "Panels show per-series residuals (P, A, I, G) centered at 0, "
-            "and the global Euclidean residual norm across the four series."
-        )
-
 
 # ----------------- sidebar -----------------
 st.sidebar.title("PAIG Controls")
@@ -663,16 +654,11 @@ nu0    = st.sidebar.slider("nu",            min_value=0.0, max_value=1.0,   valu
 gamma0 = st.sidebar.slider("gamma",         min_value=0.0, max_value=1.0,   value=0.02,  step=0.001)
 
 st.sidebar.markdown("---")
-loss_choice = st.sidebar.radio(
-    "Loss function",
-    options=["linear", "soft_l1"],
-    index=0,
-    help="‘soft_l1’ is robust to outliers; ‘linear’ is standard least squares."
-)
+loss_choice = "linear"
 norm_choice = st.sidebar.radio(
     "Normalize scales during fit",
     options=["Fit original", "Fit normalized"],
-    index=0,
+    index=1,
     help="Scale each series by its max during fitting; back-transform for plots/metrics."
 )
 
@@ -844,15 +830,6 @@ with col_right:
             # 3D figure
             png3d = render_phase3d_png(program_name, df_sorted, sol, dpi=150)
             st.image(png3d, use_container_width=True)
-
-            # Residual plots
-            with st.expander("Residual analysis (time series)", expanded=False):
-                show_residual_plots(t_years, df_sorted, sol)
-                st.caption(
-                    "Residuals are defined as Data − Model. "
-                    "Panels show per-series residuals (P, A, I, G) centered at 0, "
-                    "and the global Euclidean residual norm across the four series."
-                )
 
             # Cache the last fit so it persists across reruns
             st.session_state["last_fit"] = {
